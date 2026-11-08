@@ -1,0 +1,54 @@
+# One entry per company feed. `type` picks the fetcher in jobagent/fetchers.
+# Tokens / GUIDs below are the public ones embedded in each company's careers page.
+sources:
+  # ---- Adam (career.adamtotal.co.il) ----
+  - company: Harel Insurance
+    sector: insurance
+    type: adam
+    token: 6675d401-0dee-428a-a776-5d41885d16b0-harel
+  - company: Migdal
+    sector: insurance
+    type: adam
+    token: 6C91E014-E0F6-4DE7-8270-E235245BD569
+  - company: Altshuler Shaham
+    sector: investment house
+    type: adam
+    token: 1EB6B34D-8783-4AD3-8SS80-7FA0CFA5DFC8
+
+  # ---- TopMatch (careers.topmatch.co.il) ----
+  - company: Meitav
+    sector: investment house
+    type: topmatch
+    affiliate: 05C69BAD-26F0-48EE-A059-4961B79987F1
+    slug: Meitav
+  - company: More Investment House
+    sector: investment house
+    type: topmatch
+    affiliate: 0D3DD7B9-4CD9-4568-B7DD-B21C84A161F2
+    slug: MoreInvest
+  - company: Analyst IMS
+    sector: investment house
+    type: topmatch
+    affiliate: 48D0F6AE-9E14-4A81-B0DE-4C4A1A185109
+    slug: Analyst
+
+  # ---- Comeet ----
+  - company: ONE ZERO Digital Bank
+    sector: bank
+    type: comeet
+    uid: 36.00A
+    token: 63A255C63A63A18E831D063A31D063A1F22
+  - company: ONE ZERO Digital Bank
+    sector: bank
+    type: comeet
+    uid: E5.007
+    token: 5E7236A0BCE5E7295111B55E70BCE
+  - company: Medison Pharma
+    sector: pharma
+    type: comeet
+    uid: 67.00A
+    token: 76A2C7C163E33E625122C7C1DA8ED476A33E6
+
+# Not wired yet (custom sites, see data/israel_finance_pharma_companies.csv):
+# Leumi, Hapoalim, Discount (Oracle), Mizrahi, FIBI/Mataf, Clal, Phoenix, Hachshara,
+# Max, Cal, Isracard, Teva (Eightfold), EY (SuccessFactors), PwC (Hunter), Deloitte, KPMG.

@@ -1,0 +1,76 @@
+name: daily-job-search
+
+# Personal data stays out of the repo:
+#   CV          -> secret CV_TEXT
+#   preferences -> secret PROFILE_YAML (full contents of config/profile.yaml)
+#   jobs.db     -> Actions cache (not committed); the digest goes to Telegram/email, never to the log.
+
+on:
+  schedule:
+    - cron: "0 5 * * 0-4"   # 07:00/08:00 Israel time, Sunday-Thursday
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: ["jobagent/**", "tests/**", "requirements.txt", "Dockerfile"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-job-search
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+
+  run:
+    needs: test
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore jobs.db
+        uses: actions/cache/restore@v4
+        with:
+          path: data/jobs.db
+          key: jobs-db-${{ github.run_id }}
+          restore-keys: jobs-db-
+
+      - name: Build image
+        run: docker build -t job-search-agent .
+
+      - name: Run agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PROFILE_YAML: ${{ secrets.PROFILE_YAML }}
+          CV_TEXT: ${{ secrets.CV_TEXT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          mkdir -p data
+          docker run --rm \
+            -e ANTHROPIC_API_KEY -e PROFILE_YAML -e CV_TEXT \
+            -e TELEGRAM_BOT_TOKEN -e TELEGRAM_CHAT_ID \
+            -e SMTP_HOST -e SMTP_USER -e SMTP_PASSWORD -e EMAIL_TO \
+            -e JOBS_DB=/app/data/jobs.db \
+            -v "$PWD/data:/app/data" \
+            job-search-agent
+
+      - name: Save jobs.db
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/jobs.db
+          key: jobs-db-${{ github.run_id }}

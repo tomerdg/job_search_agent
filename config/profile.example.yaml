@@ -1,0 +1,15 @@
+# Copy to config/profile.yaml (git-ignored) and edit, or put the whole file in the PROFILE_YAML secret.
+cv_path: cv.pdf            # local path; in CI the CV comes from the CV_TEXT secret instead
+target_roles: [Data Engineer]
+
+keywords:                  # a job passes the pre-filter if title or description matches one
+  - data engineer
+  - etl
+  - "מהנדס/ת נתונים"
+
+locations_allowed:         # keep jobs whose location mentions one of these
+  - "תל אביב"
+  - "tel aviv"
+locations_blocked:         # drop jobs that only mention these
+  - "חיפה"
+  - "haifa"
