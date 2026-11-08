@@ -11,7 +11,7 @@ on:
   workflow_dispatch: {}
   push:
     branches: [main]
-    paths: ["jobagent/**", "tests/**", "requirements.txt", "Dockerfile"]
+    paths: ["jobagent/**", "tests/**", "requirements.txt", "Dockerfile", "pytest.ini"]
 
 permissions:
   contents: read

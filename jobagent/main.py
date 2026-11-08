@@ -29,7 +29,11 @@ def main(argv=None) -> None:
 
     sources = yaml.safe_load(open(args.sources, encoding="utf-8"))["sources"]
     # Personal preferences: PROFILE_YAML env (a GitHub secret) wins over the local git-ignored file.
-    profile_text = os.environ.get("PROFILE_YAML") or open(args.profile, encoding="utf-8").read()
+    profile_path = Path(args.profile)
+    if not os.environ.get("PROFILE_YAML") and not profile_path.exists():
+        log.warning("No PROFILE_YAML secret and no %s; using config/profile.example.yaml", profile_path)
+        profile_path = ROOT / "config" / "profile.example.yaml"
+    profile_text = os.environ.get("PROFILE_YAML") or profile_path.read_text(encoding="utf-8")
     profile = yaml.safe_load(profile_text)
     store = Store(args.db)
 
