@@ -42,14 +42,14 @@ def main(argv=None) -> None:
     store.mark_inactive({j.company for j in jobs}, {j.job_id for j in jobs})
     log.info("Fetched %d jobs, %d new", len(jobs), len(new_ids))
 
+    # Re-check every unscored job, not just new ones, so a changed profile applies to old jobs too.
     pf = PreFilter(profile)
     passed = 0
-    for jid in new_ids:
-        row = store.get(jid)
+    for row in store.unscored_active():
         ok = pf(row["title"], row["description"] or "", row["location"] or "")
-        store.set_prefilter(jid, ok)
+        store.set_prefilter(row["job_id"], ok)
         passed += ok
-    log.info("%d new jobs passed the pre-filter", passed)
+    log.info("%d unscored jobs pass the pre-filter", passed)
 
     if not args.no_llm and os.environ.get("ANTHROPIC_API_KEY"):
         from jobagent.agent import Agent

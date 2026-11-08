@@ -84,6 +84,9 @@ class Store:
         self.conn.execute("UPDATE jobs SET prefilter=? WHERE job_id=?", (int(passed), job_id))
         self.conn.commit()
 
+    def unscored_active(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM jobs WHERE score IS NULL AND is_active=1").fetchall()
+
     def get(self, job_id: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
 

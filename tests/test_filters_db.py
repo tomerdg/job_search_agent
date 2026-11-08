@@ -37,3 +37,10 @@ def test_store_dedup_and_incremental(tmp_path):
     assert [r["job_id"] for r in top] == [_job("3").job_id]
     s.mark_notified([r["job_id"] for r in top])
     assert s.top_unsent() == []
+
+
+def test_unscored_active(tmp_path):
+    s = Store(tmp_path / "jobs.db")
+    s.upsert([_job("1"), _job("2")])
+    s.save_score(_job("1").job_id, 70, {})
+    assert [r["job_id"] for r in s.unscored_active()] == [_job("2").job_id]
