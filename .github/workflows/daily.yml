@@ -7,7 +7,7 @@ name: daily-job-search
 
 on:
   schedule:
-    - cron: "0 5 * * 0-4"   # 07:00/08:00 Israel time, Sunday-Thursday
+    - cron: "0 8 * * 0,2,4"   # 07:00/08:00 Israel time, Sunday-Thursday
   workflow_dispatch: {}
   push:
     branches: [main]
