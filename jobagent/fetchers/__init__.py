@@ -4,7 +4,7 @@ import logging
 
 from jobagent.models import Job
 
-from . import adam, comeet, topmatch
+from . import adam, comeet, greenhouse, topmatch
 
 log = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ FETCHERS = {
     "adam": adam.fetch,
     "topmatch": topmatch.fetch,
     "comeet": comeet.fetch,
+    "greenhouse": greenhouse.fetch,
 }
 
 
@@ -27,7 +28,10 @@ def fetch_all(sources: list[dict]) -> list[Job]:
             found = fn(src)
             for j in found:
                 j.sector = src.get("sector", "")
-            log.info("%-25s %-9s %3d jobs", src["company"], src["type"], len(found))
+                # Some boards only say "Israel"; use the office city we know instead.
+                if src.get("city") and j.location.strip().lower() in ("", "israel", "il"):
+                    j.location = src["city"]
+            log.info("%-25s %-10s %3d jobs", src["company"], src["type"], len(found))
             jobs.extend(found)
         except Exception as exc:  # noqa: BLE001 - one bad site must not stop the run
             log.error("%s (%s) failed: %s", src["company"], src["type"], exc)

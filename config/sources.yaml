@@ -48,6 +48,35 @@ sources:
     type: comeet
     uid: 67.00A
     token: 76A2C7C163E33E625122C7C1DA8ED476A33E6
+  - company: Kaltura
+    sector: tech
+    type: comeet
+    uid: E2.00D
+    token: 2EDEA12ED017688C7147B1A555DA2ED
+  - company: Tufin
+    sector: tech
+    type: comeet
+    uid: A1.00B
+    token: 1AB6ACA02F03356F03F03F03D586AC
+
+  # ---- Greenhouse ----
+  - company: Taboola
+    sector: tech
+    type: greenhouse
+    board: taboola
+  - company: Gong
+    sector: tech
+    type: greenhouse
+    board: gongio
+  - company: eToro
+    sector: fintech
+    type: greenhouse
+    board: etoroltd
+    city: Bnei Brak, Israel   # the board lists Israeli jobs only as "Israel"
+  - company: Nanit
+    sector: tech
+    type: greenhouse
+    board: nanit
 
 # Not wired yet (custom sites, see data/israel_finance_pharma_companies.csv):
 # Leumi, Hapoalim, Discount (Oracle), Mizrahi, FIBI/Mataf, Clal, Phoenix, Hachshara,

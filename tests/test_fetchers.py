@@ -37,3 +37,30 @@ def test_comeet_parse():
     jobs = comeet.parse(data, {"company": "ONE ZERO"})
     assert jobs[0].location == "Tel Aviv, IL"
     assert "SQL" in jobs[0].description
+
+
+def test_greenhouse_parse():
+    from jobagent.fetchers import greenhouse
+    data = {"jobs": [{
+        "id": 123, "title": " Data Engineer ", "absolute_url": "https://x/jobs/123",
+        "location": {"name": "Tel Aviv, Israel"}, "departments": [{"name": "R&D"}],
+        "content": "&lt;p&gt;Build &lt;b&gt;pipelines&lt;/b&gt;&lt;/p&gt;",
+        "first_published": "2026-11-01T10:00:00Z", "updated_at": "2026-11-05T10:00:00Z",
+    }]}
+    jobs = greenhouse.parse(data, {"company": "Taboola"})
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert (j.external_id, j.title, j.location, j.department) == ("123", "Data Engineer", "Tel Aviv, Israel", "R&D")
+    assert "pipelines" in j.description and "<" not in j.description
+    assert j.posted_at == "2026-11-01"
+
+
+def test_fetch_all_fills_city(monkeypatch):
+    from jobagent import fetchers
+    from jobagent.models import Job
+    monkeypatch.setitem(fetchers.FETCHERS, "fake", lambda src: [
+        Job(source="fake", company="eToro", external_id="1", title="t", url="u", location="Israel"),
+        Job(source="fake", company="eToro", external_id="2", title="t", url="u", location="Limassol, Cyprus"),
+    ])
+    jobs = fetchers.fetch_all([{"company": "eToro", "type": "fake", "city": "Bnei Brak, Israel"}])
+    assert [j.location for j in jobs] == ["Bnei Brak, Israel", "Limassol, Cyprus"]
