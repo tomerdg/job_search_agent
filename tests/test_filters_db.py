@@ -44,3 +44,14 @@ def test_unscored_active(tmp_path):
     s.upsert([_job("1"), _job("2")])
     s.save_score(_job("1").job_id, 70, {})
     assert [r["job_id"] for r in s.unscored_active()] == [_job("2").job_id]
+
+
+def test_load_dotenv(tmp_path, monkeypatch):
+    from jobagent.main import load_dotenv
+    monkeypatch.delenv("JA_TEST_KEY", raising=False)
+    monkeypatch.setenv("JA_TEST_KEEP", "real")
+    (tmp_path / ".env").write_text('# c\nJA_TEST_KEY="abc"\nexport JA_TEST_KEEP=fromfile\n', encoding="utf-8")
+    load_dotenv(tmp_path / ".env")
+    import os
+    assert os.environ["JA_TEST_KEY"] == "abc"
+    assert os.environ["JA_TEST_KEEP"] == "real"

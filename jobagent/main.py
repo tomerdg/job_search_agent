@@ -17,7 +17,21 @@ ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger("jobagent")
 
 
+def load_dotenv(path: Path) -> None:
+    """Load KEY=VALUE lines from a local, git-ignored .env file. Real env vars win."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+
+
 def main(argv=None) -> None:
+    load_dotenv(ROOT / ".env")
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("JOBS_DB", str(ROOT / "data" / "jobs.db")))
     ap.add_argument("--sources", default=str(ROOT / "config" / "sources.yaml"))
