@@ -1,4 +1,4 @@
-"""Daily run: fetch -> store (dedup, incremental) -> pre-filter -> Claude scoring -> digest."""
+"""Daily run: fetch -> DuckDB store (dedup, incremental, history) -> pre-filter -> Claude scoring -> digest."""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from jobagent.db import Store
+from jobagent.db import open_store
 from jobagent.fetchers import fetch_all
 from jobagent.filters import PreFilter
 from jobagent.notify import format_digest, notify
@@ -33,7 +33,7 @@ def load_dotenv(path: Path) -> None:
 def main(argv=None) -> None:
     load_dotenv(ROOT / ".env")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.environ.get("JOBS_DB", str(ROOT / "data" / "jobs.db")))
+    ap.add_argument("--db", default=os.environ.get("JOBS_DB", str(ROOT / "data" / "jobs.duckdb")))
     ap.add_argument("--sources", default=str(ROOT / "config" / "sources.yaml"))
     ap.add_argument("--profile", default=os.environ.get("PROFILE_PATH", str(ROOT / "config" / "profile.yaml")))
     ap.add_argument("--no-llm", action="store_true", help="fetch and filter only, skip Claude")
@@ -53,17 +53,28 @@ def main(argv=None) -> None:
         profile_path = ROOT / "config" / "profile.example.yaml"
     profile_text = os.environ.get("PROFILE_YAML") or profile_path.read_text(encoding="utf-8")
     profile = yaml.safe_load(profile_text)
-    store = Store(args.db)
+    store = open_store(args.db)
+    try:
+        run(store, args, sources, profile)
+    finally:
+        store.close()
 
+
+def run(store, args, sources: list[dict], profile: dict) -> None:
     if args.mark_seen:
         ids = store.resolve_ids(args.mark_seen)
         store.mark_notified(ids)
         print(f"Marked {len(ids)} job(s) as seen")
         return
 
-    jobs = fetch_all(sources)
+    run_id = store.start_run()
+    source_stats: list[dict] = []
+    jobs = fetch_all(sources, stats=source_stats)
     new_ids = store.upsert(jobs)
     store.mark_inactive({j.company for j in jobs}, {j.job_id for j in jobs})
+    store.record_observations(run_id, [j.job_id for j in jobs])
+    store.record_sources(run_id, source_stats)
+    store.finish_run(run_id, len(jobs), len(new_ids))
     log.info("Fetched %d jobs, %d new", len(jobs), len(new_ids))
 
     # Re-check every unscored job, not just new ones, so a changed profile applies to old jobs too.
@@ -92,7 +103,6 @@ def main(argv=None) -> None:
     else:
         if notify(digest):
             store.mark_notified([r["job_id"] for r in top])
-
 
 if __name__ == "__main__":
     main()

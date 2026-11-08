@@ -1,0 +1,26 @@
+name: jobagent
+version: "1.0.0"
+config-version: 2
+profile: jobagent
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: [target, logs]
+
+models:
+  jobagent:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts
+
+tests:
+  jobagent:
+    +severity: error

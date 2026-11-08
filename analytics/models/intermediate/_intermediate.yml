@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: int_job_roles
+    description: Role family per job, from the title.
+    columns:
+      - name: job_id
+        data_tests: [unique, not_null]
+      - name: role_family
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [data_engineering, analytics_engineering, bi, data_science, analytics, other]
+
+  - name: int_job_activity
+    columns:
+      - name: job_id
+        data_tests: [unique, not_null]
+
+unit_tests:
+  - name: role_family_handles_english_and_hebrew_titles
+    model: int_job_roles
+    given:
+      - input: ref('stg_jobs')
+        rows:
+          - {job_id: "1", title: "Senior Data Engineer"}
+          - {job_id: "2", title: "מהנדס/ת נתונים"}
+          - {job_id: "3", title: "Analytics Engineer"}
+          - {job_id: "4", title: "מפתח/ת BI"}
+          - {job_id: "5", title: "Biology Lab Technician"}
+          - {job_id: "6", title: "Data Scientist"}
+          - {job_id: "7", title: "אנליסט/ית נתונים"}
+          - {job_id: "8", title: "Backend Developer"}
+    expect:
+      rows:
+        - {job_id: "1", role_family: data_engineering}
+        - {job_id: "2", role_family: data_engineering}
+        - {job_id: "3", role_family: analytics_engineering}
+        - {job_id: "4", role_family: bi}
+        - {job_id: "5", role_family: other}
+        - {job_id: "6", role_family: data_science}
+        - {job_id: "7", role_family: analytics}
+        - {job_id: "8", role_family: other}

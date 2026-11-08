@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: stg_jobs
+    description: Jobs, cleaned and renamed. Grain = one job.
+    columns:
+      - name: job_id
+        data_tests: [unique, not_null]
+      - name: company
+        data_tests: [not_null]
+      - name: source_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [adam, topmatch, comeet, greenhouse, lever, oracle, hunter, custom]
+      - name: first_seen_at
+        data_tests: [not_null]
+      - name: match_score
+        description: 0-100 from the LLM. Personal, so it stays in the local/cached DB only.
+
+  - name: stg_runs
+    columns:
+      - name: run_id
+        data_tests: [unique, not_null]
+      - name: started_at
+        data_tests: [not_null]
+
+  - name: stg_job_observations
+    description: Grain = one job in one run.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [run_id, job_id]
+    columns:
+      - name: job_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_jobs')
+                field: job_id
+      - name: run_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_runs')
+                field: run_id
+
+  - name: stg_source_runs
+    description: Grain = one source in one run.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [run_id, company, source_type]
+    columns:
+      - name: n_jobs
+        data_tests: [not_null]

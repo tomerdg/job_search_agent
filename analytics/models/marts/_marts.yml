@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: fct_job_postings
+    description: >
+      One row per job posting with its lifecycle. days_open for open jobs is time so far
+      (right-censored, flagged by is_duration_censored).
+    columns:
+      - name: job_id
+        data_tests: [unique, not_null]
+      - name: company
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_companies')
+                field: company
+      - name: days_open
+        data_tests: [not_null]
+      - name: match_band
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [strong, good, weak, no_fit, not_scored]
+
+  - name: dim_companies
+    columns:
+      - name: company
+        data_tests: [unique, not_null]
+
+  - name: mart_company_hiring
+    description: Who is hiring most and how fast their jobs close. One row per company.
+    columns:
+      - name: company
+        data_tests: [unique, not_null]
+
+  - name: mart_hiring_weekly
+    description: Weekly opened / closed / open-at-week-end postings per sector.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [week_start, sector]
+
+  - name: mart_time_to_close
+    description: Median and p75 days a job stays open, by sector and role family.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [sector, role_family]
+
+  - name: mart_source_health
+    description: Last fetch result per source and how many runs in a row it returned nothing.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [company, source_type]
+    columns:
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [ok, degraded, down]
