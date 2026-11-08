@@ -41,21 +41,52 @@ def send_telegram(text: str) -> bool:
     return True
 
 
+def _env(name: str, default: str = "") -> str:
+    return (os.environ.get(name) or default).strip()
+
+
 def send_email(text: str) -> bool:
-    host, to = os.environ.get("SMTP_HOST"), os.environ.get("EMAIL_TO")
+    host, to = _env("SMTP_HOST"), _env("EMAIL_TO")
     if not (host and to):
         return False
-    user, pwd = os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASSWORD", "")
+    if ":" in host:  # allow "smtp.gmail.com:587"
+        host, port_s = host.rsplit(":", 1)
+    else:
+        port_s = _env("SMTP_PORT", "587")
+    user = _env("SMTP_USER")
+    pwd = _env("SMTP_PASSWORD").replace(" ", "")  # Gmail app passwords are shown with spaces
     msg = MIMEText(text.replace("\n", "<br>"), "html", "utf-8")
     msg["Subject"] = "סוכן משרות: ההתאמות של היום"
-    msg["From"] = os.environ.get("EMAIL_FROM", user)
+    msg["From"] = _env("EMAIL_FROM", user)
     msg["To"] = to
-    with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587")), timeout=30) as s:
-        s.starttls()
-        if user:
-            s.login(user, pwd)
-        s.send_message(msg)
-    return True
+
+    def via_starttls(port: int):
+        with smtplib.SMTP(host, port, timeout=30) as s:
+            s.ehlo()
+            s.starttls()
+            s.ehlo()
+            if user:
+                s.login(user, pwd)
+            s.send_message(msg)
+
+    def via_ssl(port: int):
+        with smtplib.SMTP_SSL(host, port, timeout=30) as s:
+            if user:
+                s.login(user, pwd)
+            s.send_message(msg)
+
+    port = int(port_s)
+    attempts = [(via_ssl, port)] if port == 465 else [(via_starttls, port), (via_ssl, 465)]
+    last = None
+    for fn, p in attempts:
+        try:
+            fn(p)
+            log.info("Digest emailed via %s:%s", host, p)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            log.warning("SMTP %s:%s (%s) failed: %s: %s", host, p, fn.__name__, type(exc).__name__, exc)
+    raise RuntimeError(f"all SMTP attempts failed, last error: {last}")
 
 
 def notify(text: str) -> bool:
@@ -67,5 +98,5 @@ def notify(text: str) -> bool:
         except Exception as exc:  # noqa: BLE001
             log.error("%s failed: %s", fn.__name__, exc)
     if not sent:
-        log.warning("No Telegram or email configured; digest not sent (use --no-notify to print it locally)")
+        log.warning("Digest not sent (no working Telegram/email). It will be retried on the next run.")
     return sent
