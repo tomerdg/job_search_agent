@@ -55,3 +55,13 @@ def test_load_dotenv(tmp_path, monkeypatch):
     import os
     assert os.environ["JA_TEST_KEY"] == "abc"
     assert os.environ["JA_TEST_KEEP"] == "real"
+
+
+def test_resolve_ids_and_mark_seen(tmp_path):
+    s = Store(tmp_path / "jobs.db")
+    s.upsert([_job("1")])
+    jid = _job("1").job_id
+    s.save_score(jid, 90, {})
+    assert s.resolve_ids([jid[:8]]) == [jid]
+    s.mark_notified(s.resolve_ids([jid[:8]]))
+    assert s.top_unsent() == []

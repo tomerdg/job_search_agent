@@ -109,6 +109,14 @@ class Store:
             "ORDER BY score DESC, first_seen DESC LIMIT ?", (min_score, n)
         ).fetchall()
 
+    def resolve_ids(self, prefixes: list[str]) -> list[str]:
+        """Expand short ids (as shown in the digest) to full job ids."""
+        out = []
+        for p in prefixes:
+            rows = self.conn.execute("SELECT job_id FROM jobs WHERE job_id LIKE ?", (p.strip() + "%",)).fetchall()
+            out.extend(r["job_id"] for r in rows)
+        return out
+
     def mark_notified(self, job_ids: list[str]) -> None:
         ts = now()
         self.conn.executemany("UPDATE jobs SET notified_at=? WHERE job_id=?", [(ts, i) for i in job_ids])

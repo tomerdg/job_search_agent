@@ -37,7 +37,11 @@ def main(argv=None) -> None:
     ap.add_argument("--sources", default=str(ROOT / "config" / "sources.yaml"))
     ap.add_argument("--profile", default=os.environ.get("PROFILE_PATH", str(ROOT / "config" / "profile.yaml")))
     ap.add_argument("--no-llm", action="store_true", help="fetch and filter only, skip Claude")
-    ap.add_argument("--no-notify", action="store_true")
+    ap.add_argument("--no-notify", action="store_true", help="print the digest instead of sending it")
+    ap.add_argument("--mark-seen", nargs="+", metavar="ID",
+                    help="mark jobs as seen (ids from the digest) so they are never sent again, then exit")
+    ap.add_argument("--mark-printed", action="store_true",
+                    help="with --no-notify: mark the printed jobs as seen")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -50,6 +54,12 @@ def main(argv=None) -> None:
     profile_text = os.environ.get("PROFILE_YAML") or profile_path.read_text(encoding="utf-8")
     profile = yaml.safe_load(profile_text)
     store = Store(args.db)
+
+    if args.mark_seen:
+        ids = store.resolve_ids(args.mark_seen)
+        store.mark_notified(ids)
+        print(f"Marked {len(ids)} job(s) as seen")
+        return
 
     jobs = fetch_all(sources)
     new_ids = store.upsert(jobs)
@@ -77,6 +87,8 @@ def main(argv=None) -> None:
     digest = format_digest(top, len(new_ids))
     if args.no_notify:
         print(digest)
+        if args.mark_printed:
+            store.mark_notified([r["job_id"] for r in top])
     else:
         if notify(digest):
             store.mark_notified([r["job_id"] for r in top])

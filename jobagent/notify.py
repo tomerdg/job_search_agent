@@ -26,6 +26,7 @@ def format_digest(rows, total_new: int) -> str:
             f"✅ {html.escape('; '.join(a.get('strengths', [])))}\n"
             f"⚠️ {html.escape('; '.join(a.get('gaps', [])))}\n"
             f"{html.escape(r['url'] or '')}\n"
+            f"🆔 {r['job_id'][:8]}\n"
         )
     return "\n".join(lines)
 
