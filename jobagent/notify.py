@@ -60,19 +60,29 @@ def send_email(text: str) -> bool:
     msg["From"] = _env("EMAIL_FROM", user)
     msg["To"] = to
 
+    stage = {"v": ""}
+
     def via_starttls(port: int):
+        stage["v"] = "connect"
         with smtplib.SMTP(host, port, timeout=30) as s:
+            stage["v"] = "ehlo"
             s.ehlo()
+            stage["v"] = "starttls"
             s.starttls()
             s.ehlo()
             if user:
+                stage["v"] = "login"
                 s.login(user, pwd)
+            stage["v"] = "send"
             s.send_message(msg)
 
     def via_ssl(port: int):
+        stage["v"] = "connect"
         with smtplib.SMTP_SSL(host, port, timeout=30) as s:
             if user:
+                stage["v"] = "login"
                 s.login(user, pwd)
+            stage["v"] = "send"
             s.send_message(msg)
 
     # Safe diagnostics (no secret values): helps spot a wrong host or password format.
@@ -88,7 +98,7 @@ def send_email(text: str) -> bool:
             return True
         except Exception as exc:  # noqa: BLE001
             last = exc
-            log.warning("SMTP %s:%s (%s) failed: %s: %s", host, p, fn.__name__, type(exc).__name__, exc)
+            log.warning("SMTP %s:%s (%s) failed at %s: %s: %s", host, p, fn.__name__, stage["v"], type(exc).__name__, exc)
     raise RuntimeError(f"all SMTP attempts failed, last error: {last}")
 
 
