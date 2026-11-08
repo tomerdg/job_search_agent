@@ -19,3 +19,4 @@ analytics/target/
 analytics/logs/
 analytics/dbt_packages/
 logs/
+analytics/.user.yml
