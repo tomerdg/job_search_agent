@@ -75,6 +75,9 @@ def send_email(text: str) -> bool:
                 s.login(user, pwd)
             s.send_message(msg)
 
+    # Safe diagnostics (no secret values): helps spot a wrong host or password format.
+    log.info("SMTP check: host_is_gmail=%s host_has_at=%s user_is_email=%s password_len=%d to_is_email=%s",
+             host.lower() == "smtp.gmail.com", "@" in host, "@" in user, len(pwd), "@" in to)
     port = int(port_s)
     attempts = [(via_ssl, port)] if port == 465 else [(via_starttls, port), (via_ssl, 465)]
     last = None
