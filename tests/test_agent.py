@@ -27,7 +27,7 @@ class FakeClient:
 
 def test_agent_scores_job(tmp_path):
     s = Store(tmp_path / "jobs.duckdb")
-    j = Job(source="adam", company="Harel", external_id="1", title="Data Engineer", url="u",
+    j = Job(source="adam", company="Acme", external_id="1", title="Data Engineer", url="u",
             location="רמת גן", description="Airflow, Python")
     s.upsert([j])
     s.set_prefilter(j.job_id, True)

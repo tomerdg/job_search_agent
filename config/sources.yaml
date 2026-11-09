@@ -77,7 +77,3 @@ sources:
     sector: tech
     type: greenhouse
     board: nanit
-
-# Not wired yet (custom sites, see data/israel_finance_pharma_companies.csv):
-# Leumi, Hapoalim, Discount (Oracle), Mizrahi, FIBI/Mataf, Clal, Phoenix, Hachshara,
-# Max, Cal, Isracard, Teva (Eightfold), EY (SuccessFactors), PwC (Hunter), Deloitte, KPMG.
