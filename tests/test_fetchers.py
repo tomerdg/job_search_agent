@@ -64,3 +64,17 @@ def test_fetch_all_fills_city(monkeypatch):
     ])
     jobs = fetchers.fetch_all([{"company": "eToro", "type": "fake", "city": "Bnei Brak, Israel"}])
     assert [j.location for j in jobs] == ["Bnei Brak, Israel", "Limassol, Cyprus"]
+
+
+def test_fetch_all_records_source_stats(monkeypatch):
+    from jobagent import fetchers
+
+    def boom(src):
+        raise ValueError("site changed")
+
+    monkeypatch.setitem(fetchers.FETCHERS, "fake", lambda src: [])
+    monkeypatch.setitem(fetchers.FETCHERS, "broken", boom)
+    stats = []
+    fetchers.fetch_all([{"company": "A", "type": "fake"}, {"company": "B", "type": "broken"}], stats=stats)
+    assert [(s["company"], s["ok"], s["n_jobs"]) for s in stats] == [("A", True, 0), ("B", False, 0)]
+    assert stats[1]["error"] == "ValueError: site changed"

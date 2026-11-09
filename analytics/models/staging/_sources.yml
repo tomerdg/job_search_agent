@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Tables written by the Python agent (jobagent/db.py) in data/jobs.duckdb.
+    database: raw
+    schema: main
+    tables:
+      - name: jobs
+        description: One row per job ever seen, with its current state.
+        columns:
+          - name: job_id
+            data_tests: [unique, not_null]
+      - name: runs
+        description: One row per agent run.
+        columns:
+          - name: run_id
+            data_tests: [unique, not_null]
+      - name: job_observations
+        description: Append-only. Which jobs were live on the careers site in which run.
+      - name: source_runs
+        description: Append-only. Per run and source, whether the fetch worked and how many jobs it returned.

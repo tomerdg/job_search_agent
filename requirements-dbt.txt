@@ -1,0 +1,4 @@
+# The dbt project in analytics/. Kept apart from requirements.txt so the agent's Docker image stays small.
+dbt-core>=1.10,<2
+dbt-duckdb>=1.9,<2
+duckdb>=1.1,<3

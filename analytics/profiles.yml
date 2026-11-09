@@ -1,0 +1,15 @@
+# Two DuckDB files:
+#   raw       = data/jobs.duckdb, written by the agent. Attached read-only, dbt never changes it.
+#   warehouse = data/warehouse.duckdb, built by dbt from raw. Safe to delete; it is rebuilt every run.
+# Run from the repo root: dbt build --project-dir analytics --profiles-dir analytics
+jobagent:
+  target: prod
+  outputs:
+    prod:
+      type: duckdb
+      path: "{{ env_var('DBT_WAREHOUSE_DB', 'data/warehouse.duckdb') }}"
+      threads: 4
+      attach:
+        - path: "{{ env_var('DBT_RAW_DB', 'data/jobs.duckdb') }}"
+          alias: raw
+          read_only: true
