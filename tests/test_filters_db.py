@@ -22,14 +22,14 @@ def test_prefilter_role_and_location():
 
 
 def _job(eid, title="Data Engineer"):
-    return Job(source="adam", company="Harel", external_id=eid, title=title, url="u", location="רמת גן")
+    return Job(source="adam", company="Acme", external_id=eid, title=title, url="u", location="רמת גן")
 
 
 def test_store_dedup_and_incremental(tmp_path):
     s = Store(tmp_path / "jobs.duckdb")
     assert len(s.upsert([_job("1"), _job("2"), _job("2")])) == 2
     assert s.upsert([_job("1"), _job("3")]) == [_job("3").job_id]
-    s.mark_inactive({"Harel"}, {_job("3").job_id})
+    s.mark_inactive({"Acme"}, {_job("3").job_id})
     assert s.get(_job("1").job_id)["is_active"] == 0
     s.set_prefilter(_job("3").job_id, True)
     s.save_score(_job("3").job_id, 90, {"summary": "x", "strengths": [], "gaps": []})
@@ -74,10 +74,10 @@ def test_history_tables(tmp_path):
     r1 = s.start_run(ts=t1)
     s.upsert([_job("1"), _job("2")], ts=t1)
     s.record_observations(r1, [_job("1").job_id, _job("2").job_id, _job("2").job_id], ts=t1)
-    s.record_sources(r1, [{"company": "Harel", "source_type": "adam", "ok": True, "n_jobs": 2}])
+    s.record_sources(r1, [{"company": "Acme", "source_type": "adam", "ok": True, "n_jobs": 2}])
     r2 = s.start_run(ts=t2)
     s.upsert([_job("2")], ts=t2)
-    s.mark_inactive({"Harel"}, {_job("2").job_id}, ts=t2)
+    s.mark_inactive({"Acme"}, {_job("2").job_id}, ts=t2)
     s.record_observations(r2, [_job("2").job_id], ts=t2)
     s.finish_run(r2, 1, 0, ts=t2)
     closed = s.get(_job("1").job_id)
@@ -100,7 +100,7 @@ def test_migrates_old_sqlite_db(tmp_path):
           external_id TEXT, title TEXT, location TEXT, department TEXT, url TEXT, description TEXT,
           posted_at TEXT, first_seen TEXT, last_seen TEXT, is_active INTEGER, prefilter INTEGER,
           score INTEGER, analysis TEXT, notified_at TEXT);
-        INSERT INTO jobs VALUES ('abc123', 'adam', 'Harel', 'insurance', '1', 'Data Engineer', 'רמת גן',
+        INSERT INTO jobs VALUES ('abc123', 'adam', 'Acme', 'retail', '1', 'Data Engineer', 'רמת גן',
           '', 'u', 'd', '', '2026-01-01T08:00:00+00:00', '2026-01-05T08:00:00+00:00', 1, 1, 90, '{}',
           '2026-01-02T08:00:00+00:00');
     """)

@@ -6,7 +6,7 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 def test_adam_parse():
-    jobs = adam.parse_page((FIX / "adam_page.html").read_text(encoding="utf-8"), "Harel")
+    jobs = adam.parse_page((FIX / "adam_page.html").read_text(encoding="utf-8"), "Acme")
     assert [j.external_id for j in jobs] == ["5712", "5800"]
     j = jobs[0]
     assert j.title == "חתמ/ת פרט"

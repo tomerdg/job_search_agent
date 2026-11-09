@@ -16,18 +16,18 @@ from jobagent.db import Store
 from jobagent.models import Job
 
 COMPANIES = [  # (name, sector, source type, city, jobs opened per run on average)
-    ("Northwind Insurance", "insurance", "adam", "רמת גן", 1.2),
-    ("Blue Harbor Bank", "banking", "topmatch", "תל אביב", 1.5),
-    ("Cedar Investments", "investment", "topmatch", "תל אביב", 0.6),
-    ("Helix Pharma", "pharma", "comeet", "פתח תקווה", 0.8),
-    ("Ledgerline CPA", "accounting", "comeet", "בני ברק", 0.4),
-    ("Quanta Ads", "tech", "greenhouse", "Tel Aviv", 2.0),
-    ("Silent Source Ltd", "insurance", "adam", "הרצליה", 0.5),  # stops returning jobs: source-health demo
+    ("Northwind Retail", "retail", "adam", "רמת גן", 1.2),
+    ("Blue Harbor Payments", "fintech", "topmatch", "תל אביב", 1.5),
+    ("Cedar Logistics", "logistics", "topmatch", "תל אביב", 0.6),
+    ("Helix Health", "healthtech", "comeet", "פתח תקווה", 0.8),
+    ("Ledgerline Software", "saas", "comeet", "בני ברק", 0.4),
+    ("Quanta Ads", "adtech", "greenhouse", "Tel Aviv", 2.0),
+    ("Silent Source Ltd", "retail", "adam", "הרצליה", 0.5),  # stops returning jobs: source-health demo
 ]
 TITLES = [
     "Data Engineer", "Senior Data Engineer", "Analytics Engineer", "BI Developer", "מפתח/ת BI",
     "מהנדס/ת נתונים", "Data Analyst", "Data Scientist", "Backend Developer", "Product Manager",
-    "QA Engineer", "נציג/ת שירות לקוחות", "Actuary", "DevOps Engineer",
+    "QA Engineer", "נציג/ת שירות לקוחות", "Marketing Analyst", "DevOps Engineer",
 ]
 
 
