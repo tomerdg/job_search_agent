@@ -39,7 +39,9 @@ flowchart LR
     end
     S["Company careers sites<br/>(public ATS endpoints)"] --> F
     N --> O["Telegram / Email"]
-    C[("Actions cache")] <-->|"jobs.duckdb between runs<br/>(never committed)"| R
+    C[("Actions cache")] <-->|"encrypted jobs.duckdb between runs<br/>(never committed)"| R
+    W -.-> X[("Artifact job-db<br/>encrypted, downloadable")]
+    R -.-> X
 ```
 
 ## Design decisions
@@ -76,8 +78,9 @@ an embedded columnar file with no server to run, and fast enough for analytical 
 **Reproducible "now".** Marts use the latest run time, not the wall clock, so the same database always gives the same result.
 
 **Personal data never enters git.** The CV and search preferences come from GitHub secrets at runtime. The image
-holds no personal data, the database lives in the Actions cache, and the digest goes only to Telegram or email,
-never to the log.
+holds no personal data, the database is encrypted with a passphrase secret before it touches the Actions cache
+or a downloadable artifact (artifacts of a public repo can be downloaded by anyone signed in to GitHub), and the
+digest goes only to Telegram or email, never to the log.
 
 ## Try it on demo data
 
@@ -168,6 +171,7 @@ Jobs already handled by hand can be skipped in future digests with `--mark-seen`
 | `CV_TEXT` | yes | CV as plain text (phone and email are stripped before it reaches the model) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | for Telegram | bot from @BotFather; chat id from `getUpdates` |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_TO` | for email | e.g. Gmail with an app password |
+| `DB_PASSPHRASE` | recommended | long random passphrase that encrypts the job database in the cache and in the downloadable artifact. Keep a copy, it is needed to open the download. Without it the cache is unencrypted and nothing is uploaded |
 
 Run it by hand from the Actions tab (`daily-job-search` → Run workflow). The model is set by `CLAUDE_MODEL`
 (default `claude-sonnet-5-5`), and the per-run cap by `BATCH` in `jobagent/agent.py`.
@@ -178,8 +182,35 @@ Run it by hand from the Actions tab (`daily-job-search` → Run workflow). The m
 |---|---|---|
 | CV | path in `config/profile.yaml` or `CV_PATH` | secret `CV_TEXT` |
 | Preferences (roles, keywords, locations) | `config/profile.yaml` | secret `PROFILE_YAML` |
-| Job history + scores | `data/jobs.duckdb` | Actions cache, never committed |
-| dbt marts | `data/warehouse.duckdb` | built on the runner and discarded; the log shows only test counts |
+| Job history + scores | `data/jobs.duckdb` | Actions cache, encrypted with `DB_PASSPHRASE`, never committed |
+| dbt marts | `data/warehouse.duckdb` | built on the runner; the log shows only test counts |
+| Downloadable copy of both | | artifact `job-db` on each run, encrypted with `DB_PASSPHRASE`, kept 30 days |
 | Digest | printed with `--no-notify` | Telegram / email only |
 
 `.gitignore` blocks `*.pdf`, `*.docx`, `cv.*`, `config/profile.yaml`, `data/*.db`, `data/*.duckdb` and `data/*.csv`.
+
+### Query your job history
+
+Each scheduled run uploads `jobs.duckdb` (raw history, scores) and `warehouse.duckdb` (dbt marts) as one encrypted
+artifact, `job-db`. To get it:
+
+1. Actions tab → latest `daily-job-search` run → **Artifacts** → `job-db` (or `gh run download -n job-db`).
+2. Unzip it into the repo folder and decrypt:
+
+```bash
+unzip job-db.zip                       # skip if gh run download already unpacked it
+read -s DB_PASSPHRASE && export DB_PASSPHRASE
+scripts/dbcrypt.sh decrypt job-db.tar.gz.enc job-db.tar.gz
+mkdir -p data && tar -xzf job-db.tar.gz -C data && rm job-db.tar.gz job-db.tar.gz.enc
+```
+
+3. Query it with the DuckDB CLI (`brew install duckdb`) or Python:
+
+```bash
+duckdb -readonly data/jobs.duckdb "select company, title, score, analysis->>'gaps' as gaps from jobs where score is not null order by score desc limit 20"
+duckdb -readonly data/warehouse.duckdb "from marts.mart_company_hiring order by hiring_rank_90d"
+python -c "import duckdb; print(duckdb.connect('data/warehouse.duckdb', read_only=True).sql('from marts.mart_source_health'))"
+```
+
+The download replaces any local `data/jobs.duckdb`, so if you also run the agent locally, keep one of the two as
+the main copy. Artifacts expire after 30 days, but every run uploads a fresh full copy.

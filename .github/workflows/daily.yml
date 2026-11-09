@@ -3,9 +3,12 @@ name: daily-job-search
 # Personal data stays out of the repo:
 #   CV          -> secret CV_TEXT
 #   preferences -> secret PROFILE_YAML (full contents of config/profile.yaml)
-#   jobs.duckdb -> Actions cache (not committed); the digest goes to Telegram/email, never to the log.
-#   dbt marts   -> built into data/warehouse.duckdb on the runner and thrown away; only pass/warn
-#                  counts reach the log, never rows.
+#   jobs.duckdb -> encrypted with secret DB_PASSPHRASE, then kept in the Actions cache between runs
+#                  (never committed). The digest goes to Telegram/email, never to the log.
+#   download    -> after each run, jobs.duckdb + warehouse.duckdb are uploaded as the artifact
+#                  "job-db", encrypted with the same passphrase. The repo is public and any signed-in
+#                  GitHub user can download its artifacts, so they are never uploaded unencrypted.
+#   dbt marts   -> only pass/warn counts reach the log, never rows.
 
 on:
   schedule:
@@ -61,11 +64,33 @@ jobs:
     needs: test
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      HAS_DB_KEY: ${{ secrets.DB_PASSPHRASE != '' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore jobs.duckdb
+      # Preferred: the encrypted DB from the last run.
+      - name: Restore encrypted jobs.duckdb
+        id: enc_cache
+        if: env.HAS_DB_KEY == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/jobs.duckdb.enc
+          key: jobs-duckdb-enc-${{ github.run_id }}
+          restore-keys: jobs-duckdb-enc-
+
+      - name: Decrypt jobs.duckdb
+        if: steps.enc_cache.outputs.cache-matched-key != ''
+        env:
+          DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
+        run: |
+          scripts/dbcrypt.sh decrypt data/jobs.duckdb.enc data/jobs.duckdb
+          rm data/jobs.duckdb.enc
+
+      # Fallback / one-time migration: the unencrypted cache from before DB_PASSPHRASE existed.
+      - name: Restore unencrypted jobs.duckdb
         id: cache
+        if: steps.enc_cache.outputs.cache-matched-key == ''
         uses: actions/cache/restore@v4
         with:
           path: data/jobs.duckdb
@@ -74,7 +99,7 @@ jobs:
 
       # One-time migration: before DuckDB the cache held a SQLite jobs.db. The agent imports it.
       - name: Restore old SQLite jobs.db
-        if: steps.cache.outputs.cache-matched-key == ''
+        if: steps.enc_cache.outputs.cache-matched-key == '' && steps.cache.outputs.cache-matched-key == ''
         uses: actions/cache/restore@v4
         with:
           path: data/jobs.db
@@ -105,8 +130,22 @@ jobs:
             -v "$PWD/data:/app/data" \
             job-search-agent
 
-      - name: Save jobs.duckdb
-        if: always()
+      - name: Encrypt and save jobs.duckdb
+        if: always() && env.HAS_DB_KEY == 'true' && hashFiles('data/jobs.duckdb') != ''
+        env:
+          DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
+        run: scripts/dbcrypt.sh encrypt data/jobs.duckdb data/jobs.duckdb.enc
+
+      - name: Save encrypted jobs.duckdb
+        if: always() && env.HAS_DB_KEY == 'true' && hashFiles('data/jobs.duckdb.enc') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/jobs.duckdb.enc
+          key: jobs-duckdb-enc-${{ github.run_id }}
+
+      # Without DB_PASSPHRASE: keep the old behaviour so history is not lost, and say so.
+      - name: Save unencrypted jobs.duckdb
+        if: always() && env.HAS_DB_KEY != 'true'
         uses: actions/cache/save@v4
         with:
           path: data/jobs.duckdb
@@ -122,3 +161,29 @@ jobs:
         run: |
           pip install -r requirements-dbt.txt
           dbt build --project-dir analytics --profiles-dir analytics
+
+      # Downloadable copy for querying locally (see README, "Query your job history").
+      - name: Encrypt databases for download
+        if: always() && env.HAS_DB_KEY == 'true' && hashFiles('data/jobs.duckdb') != ''
+        env:
+          DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
+        run: |
+          files=(jobs.duckdb)
+          [ -f data/warehouse.duckdb ] && files+=(warehouse.duckdb)
+          tar -czf job-db.tar.gz -C data "${files[@]}"
+          scripts/dbcrypt.sh encrypt job-db.tar.gz job-db.tar.gz.enc
+          rm job-db.tar.gz
+
+      - name: Upload encrypted databases
+        if: always() && env.HAS_DB_KEY == 'true' && hashFiles('job-db.tar.gz.enc') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-db
+          path: job-db.tar.gz.enc
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Warn when DB_PASSPHRASE is missing
+        if: always() && env.HAS_DB_KEY != 'true'
+        run: echo "::warning::Secret DB_PASSPHRASE is not set, so the job database is cached unencrypted and no downloadable copy is made. Add the secret to fix both."
