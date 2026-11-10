@@ -12,7 +12,9 @@ name: daily-job-search
 
 on:
   schedule:
-    - cron: "0 8 * * 0,2,4"   # 07:00/08:00 Israel time, Sunday-Thursday
+    # Cron is UTC: 08:23 UTC = 10:23 Israel (winter) / 11:23 (summer), Sun/Tue/Thu.
+    # Off the top of the hour, when GitHub most often delays or drops scheduled runs.
+    - cron: "23 8 * * 0,2,4"
   workflow_dispatch: {}
   push:
     branches: [main]
