@@ -7,7 +7,7 @@ a list of jobs you picked is personal. Each fetched posting is appended to eval/
 matching row in eval/out/labels.csv (the given label pre-filled, to review). case_id is a hash of the
 URL, so hand-added jobs look like the exported ones. Postings already in the draft are skipped.
 
-Supported: Greenhouse, Ashby and Workable through their public APIs; any other page through its
+Supported: Greenhouse, Ashby, Workable and Hunter HRMS through their public APIs; any other page through its
 schema.org JobPosting data, falling back to the page text. LinkedIn is skipped (it blocks automated
 access). A posting whose text comes back shorter than --min-chars is reported and not added: it is
 usually a closed job or a page that needs JavaScript.
@@ -84,6 +84,23 @@ def _workable(url: str) -> dict | None:
             "description": clean_text(text)}
 
 
+def _hunter(url: str) -> dict | None:
+    """Hunter HRMS career sites (<tenant>-careersite.hunterhrms.com): a JavaScript page that loads the job
+    from the tenant's backend, the same call the page makes."""
+    m = re.search(r"//([a-z0-9-]+)-careersite\.hunterhrms\.com/job\?jid=(\d+)", url)
+    if not m:
+        return None
+    tenant, jid = m.groups()
+    r = session.post(f"https://niloo-server.herokuapp.com/actions-{tenant}-career",
+                     json={"cmd": "get-job", "data": {"jid": jid}}, timeout=TIMEOUT)
+    if not r.ok or not isinstance(r.json(), dict):
+        return None
+    d = r.json()
+    text = " ".join(html.unescape(d.get(k) or "") for k in ("description", "requirements", "skills"))
+    return {"title": d.get("jobTitle", ""), "location": d.get("locationAddress") or "", "department": "",
+            "description": clean_text(text)}
+
+
 def _jsonld_posting(page: str) -> dict | None:
     for block in re.findall(r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', page, re.S | re.I):
         try:
@@ -106,6 +123,8 @@ def _generic(url: str) -> dict | None:
     r = session.get(url, timeout=TIMEOUT)
     if not r.ok:
         return None
+    if r.encoding and r.encoding.lower() == "iso-8859-1":  # requests' default when no charset is sent
+        r.encoding = r.apparent_encoding
     page = r.text
     found = _jsonld_posting(page)
     if found and len(found["description"]) > 200:
@@ -120,7 +139,7 @@ def fetch_posting(url: str) -> dict | None:
     host = urlparse(url).netloc
     if "linkedin.com" in host:
         return None
-    for fn in (_greenhouse, _ashby, _workable):
+    for fn in (_greenhouse, _ashby, _workable, _hunter):
         got = fn(url)
         if got:
             return got
