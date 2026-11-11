@@ -1,0 +1,12 @@
+# Personal data and local state never go into the image (the image only needs jobagent/ and config/sources.yaml).
+.env
+.venv/
+.git/
+*.pdf
+*.docx
+/cv.*
+config/profile.yaml
+data/
+analytics/
+tests/
+**/__pycache__/
