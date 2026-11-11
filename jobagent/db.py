@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS source_runs (
     error        VARCHAR,
     PRIMARY KEY (run_id, company, source_type)
 );
+-- Added later; ADD COLUMN IF NOT EXISTS migrates databases created before.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS prompt_version VARCHAR;  -- prompt that produced score
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model VARCHAR;           -- model that produced score
 """
 
 JOB_COLS = ["job_id", "source", "company", "sector", "external_id", "title", "location",
@@ -235,10 +238,11 @@ class Store:
             "ORDER BY first_seen DESC, job_id LIMIT ?", (limit,)
         )
 
-    def save_score(self, job_id: str, score: int, analysis: dict) -> None:
+    def save_score(self, job_id: str, score: int, analysis: dict,
+                   prompt_version: str | None = None, model: str | None = None) -> None:
         self.conn.execute(
-            "UPDATE jobs SET score=?, analysis=? WHERE job_id=?",
-            (int(score), json.dumps(analysis, ensure_ascii=False), job_id),
+            "UPDATE jobs SET score=?, analysis=?, prompt_version=?, model=? WHERE job_id=?",
+            (int(score), json.dumps(analysis, ensure_ascii=False), prompt_version, model, job_id),
         )
 
     def top_unsent(self, n: int = 3, min_score: int = 50) -> list[dict]:

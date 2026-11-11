@@ -17,6 +17,10 @@ models:
         data_tests: [not_null]
       - name: match_score
         description: 0-100 from the LLM. Personal, so it stays in the local/cached DB only.
+      - name: scoring_prompt_version
+        description: Prompt file (jobagent/prompts/<version>.txt) that produced match_score. NULL for scores saved before it was tracked.
+      - name: scoring_model
+        description: Claude model that produced match_score. NULL for scores saved before it was tracked.
 
   - name: stg_runs
     columns:
