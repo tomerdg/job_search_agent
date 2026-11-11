@@ -43,6 +43,10 @@ The export samples by stratum (already-scored jobs by score band, jobs the pre-f
 location, data-ish titles the keywords missed, and plain negatives) and round-robins across companies.
 It leaves out the agent's score on purpose, so it does not anchor your labels.
 
+To add postings by URL (e.g. jobs you applied to), list them in a git-ignored file and run
+`python scripts/fetch_eval_postings.py eval/out/urls.txt --label fit --note applied`. It appends to the draft;
+check the result, because closed postings and JavaScript-only pages come back empty or as site menus.
+
 Then:
 
 1. Review `eval/out/jobs.jsonl`; remove jobs with empty or useless descriptions.

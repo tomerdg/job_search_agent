@@ -76,3 +76,25 @@ def test_stratum_buckets():
     assert mod.stratum(row(title="Data Engineer", location="Haifa"), pf) == "role_bad_location"
     assert mod.stratum(row(title="BI Developer"), pf) == "data_title"
     assert mod.stratum(row(title="Chef"), pf) == "other"
+
+
+def _fetch_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "fetch_postings", Path(__file__).resolve().parent.parent / "scripts" / "fetch_eval_postings.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_fetch_reads_jsonld_and_url_list(tmp_path):
+    mod = _fetch_module()
+    page = ('<html><script type="application/ld+json">{"@type": "JobPosting", "title": "Data Engineer",'
+            ' "description": "&lt;p&gt;Build pipelines&lt;/p&gt;",'
+            ' "jobLocation": {"address": {"addressLocality": "Tel Aviv"}}}</script></html>')
+    got = mod._jsonld_posting(page)
+    assert got["title"] == "Data Engineer" and got["location"] == "Tel Aviv" and got["description"] == "Build pipelines"
+    urls = tmp_path / "urls.txt"
+    urls.write_text("# comment\nAcme\thttps://a.example/job/1\nhttps://b.example/job/2\n", encoding="utf-8")
+    assert mod.read_urls(urls) == [("Acme", "https://a.example/job/1"), ("", "https://b.example/job/2")]
+    assert mod.fetch_posting("https://www.linkedin.com/jobs/view/1/") is None  # skipped, no request made
