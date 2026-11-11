@@ -7,7 +7,8 @@ a list of jobs you picked is personal. Each fetched posting is appended to eval/
 matching row in eval/out/labels.csv (the given label pre-filled, to review). case_id is a hash of the
 URL, so hand-added jobs look like the exported ones. Postings already in the draft are skipped.
 
-Supported: Greenhouse, Ashby, Workable and Hunter HRMS through their public APIs; any other page through its
+Supported: Greenhouse, Ashby, Workable and Hunter HRMS through their public APIs, Comeet-hosted pages
+through the position data they embed; any other page through its
 schema.org JobPosting data, falling back to the page text. LinkedIn is skipped (it blocks automated
 access). A posting whose text comes back shorter than --min-chars is reported and not added: it is
 usually a closed job or a page that needs JavaScript.
@@ -35,12 +36,15 @@ LABEL_COLS = ["case_id", "label", "note", "company", "title", "location", "url"]
 
 
 def _greenhouse(url: str) -> dict | None:
-    m = re.search(r"greenhouse\.io/([^/]+)/jobs/(\d+)", url) or re.search(r"[?&]gh_jid=(\d+)", url)
-    if not m:
-        return None
-    if len(m.groups()) == 1:  # company careers page that embeds Greenhouse (?gh_jid=); board unknown
-        return None
-    board, jid = m.groups()
+    m = re.search(r"greenhouse\.io/([^/]+)/jobs/(\d+)", url)
+    if m:
+        board, jid = m.groups()
+    else:  # embed form: greenhouse.io/embed/job_app?for=<board>&token=<job id>
+        board = re.search(r"greenhouse\.io/embed/job_app\?.*?\bfor=([^&]+)", url)
+        jid = re.search(r"greenhouse\.io/embed/job_app\?.*?\btoken=(\d+)", url)
+        if not (board and jid):
+            return None  # incl. careers pages with ?gh_jid=: the board name is unknown
+        board, jid = board.group(1), jid.group(1)
     for host in ("boards-api.greenhouse.io", "boards-api.eu.greenhouse.io"):
         r = session.get(f"https://{host}/v1/boards/{board}/jobs/{jid}", timeout=TIMEOUT)
         if r.ok:
@@ -82,6 +86,22 @@ def _workable(url: str) -> dict | None:
             "department": ", ".join(d.get("department") or []) if isinstance(d.get("department"), list)
             else (d.get("department") or ""),
             "description": clean_text(text)}
+
+
+def _comeet_page(url: str) -> dict | None:
+    """Comeet-hosted job pages embed the position as POSITION_DATA = {...} (null once the job closes).
+    Some companies' embedded data has no description; those come back empty and are reported."""
+    if "comeet.com/jobs/" not in url:
+        return None
+    page = session.get(url, timeout=TIMEOUT).text
+    m = re.search(r"POSITION_DATA\s*=\s*", page)
+    if not m or page.startswith("null", m.end()):
+        return None
+    d, _ = json.JSONDecoder().raw_decode(page, m.end())
+    loc = d.get("location") or {}
+    text = " ".join(f"{x.get('name', '')}: {x.get('value') or ''}" for x in d.get("details") or [])
+    return {"title": d.get("name", ""), "location": loc.get("name", "") if isinstance(loc, dict) else "",
+            "department": d.get("department") or "", "description": clean_text(text)}
 
 
 def _hunter(url: str) -> dict | None:
@@ -146,7 +166,7 @@ def fetch_posting(url: str) -> dict | None:
     host = urlparse(url).netloc
     if "linkedin.com" in host:
         return None
-    for fn in (_greenhouse, _ashby, _workable, _hunter):
+    for fn in (_greenhouse, _ashby, _workable, _comeet_page, _hunter):
         got = fn(url)
         if got:
             return got
