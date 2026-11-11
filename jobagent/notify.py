@@ -16,7 +16,11 @@ log = logging.getLogger(__name__)
 def format_digest(rows, total_new: int) -> str:
     if not rows:
         return f"🔎 סוכן משרות: {total_new} משרות חדשות היום, אין התאמה חזקה."
-    lines = [f"🔎 <b>3 המשרות המתאימות היום</b> (מתוך {total_new} חדשות)\n"]
+    # rows are the best unsent matches, which can include jobs scored on earlier days
+    title = "המשרה המתאימה ביותר" if len(rows) == 1 else f"{len(rows)} המשרות המתאימות ביותר"
+    new_note = ("אין משרות חדשות היום" if total_new == 0 else
+                "משרה חדשה אחת היום" if total_new == 1 else f"{total_new} משרות חדשות היום")
+    lines = [f"🔎 <b>{title}</b> ({new_note})\n"]
     for i, r in enumerate(rows, 1):
         a = json.loads(r["analysis"] or "{}")
         lines.append(
