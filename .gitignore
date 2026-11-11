@@ -20,3 +20,9 @@ analytics/logs/
 analytics/dbt_packages/
 logs/
 analytics/.user.yml
+
+# Evaluation: plain labels and local outputs stay local (labels.csv.enc is committed instead)
+eval/out/
+eval/dataset/labels.csv
+mlruns/
+mlflow.db
