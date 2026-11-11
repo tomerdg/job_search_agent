@@ -25,5 +25,6 @@ analytics/.user.yml
 eval/out/
 eval/dataset/labels.csv
 eval/dataset/jobs.jsonl
+eval/dataset/baseline.json
 mlruns/
 mlflow.db

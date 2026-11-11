@@ -2,8 +2,10 @@
 
     eval/dataset/jobs.jsonl.enc    job postings, one JSON object per line, encrypted (committed)
     eval/dataset/labels.csv.enc    the owner's labels, encrypted (committed)
+    eval/dataset/baseline.json.enc per-case scores of the baseline run, encrypted (committed; CV-derived)
     eval/dataset/jobs.jsonl        plain copies, local only (git-ignored)
     eval/dataset/labels.csv
+    eval/dataset/baseline.json
 
 Both files are personal: the labels say which jobs the owner would apply to, and the job list includes
 jobs the owner actually applied to. So neither is committed in plain text. Both are encrypted with
@@ -135,10 +137,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Evaluation dataset tools")
     ap.add_argument("command", choices=["check", "encrypt", "decrypt"])
     args = ap.parse_args(argv)
-    files = (JOBS_PATH, LABELS_PATH)
+    baseline = DATASET_DIR / "baseline.json"  # written by `python -m eval.evaluate --write-baseline`
+    files = (JOBS_PATH, LABELS_PATH) + ((baseline,) if baseline.exists() or enc_path(baseline).exists() else ())
     if args.command == "encrypt":
         for f in files:
-            print(f"{enc_path(f).name}: {'encrypted' if encrypt(f) else 'unchanged, not re-encrypted'}")
+            if f.exists():
+                print(f"{enc_path(f).name}: {'encrypted' if encrypt(f) else 'unchanged, not re-encrypted'}")
         return 0
     if args.command == "decrypt":
         for f in files:
