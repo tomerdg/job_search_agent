@@ -4,13 +4,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+from pathlib import Path
 
-
+from jobagent.costs import add_usage, empty_usage, estimate_cost_usd
 from jobagent.db import Store
 
 log = logging.getLogger(__name__)
 
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5-5")
+PROMPT_VERSION = os.environ.get("PROMPT_VERSION", "v1")
 MAX_TURNS = 80
 JD_MAX_CHARS = 3500
 BATCH = 15  # jobs scored per run; the rest wait for the next day
@@ -54,30 +57,39 @@ TOOLS = [
     },
 ]
 
-SYSTEM = """You are a job-matching agent for one candidate in Israel.
-Target roles: {roles}. Allowed locations: {allowed}. Excluded locations: {blocked}.
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-Work like this:
-1. Call read_cv once.
-2. Call list_new_jobs.
-3. For every job, call read_job_description, then save_match. You may call several tools in one turn.
-Scoring guide: 85-100 = the role is one of the target roles and the requirements match the CV well;
-60-84 = a target role with real gaps, or an adjacent data role (e.g. data analyst with heavy SQL/ETL);
-30-59 = data-related but a different job family; 0-29 = not a data role, or the location is clearly outside the area.
-Judge the JD itself, not just the title. Write summary, strengths and gaps in Hebrew. Be concise.
-When every job has a saved score, reply with the single word DONE."""
+
+def load_prompt(version: str) -> str:
+    """System prompt template jobagent/prompts/{version}.txt (placeholders: roles, allowed, blocked)."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", version) or version.startswith("."):
+        raise ValueError(f"bad prompt version: {version!r}")
+    path = PROMPTS_DIR / f"{version}.txt"
+    if not path.is_file():
+        raise FileNotFoundError(f"no prompt file for version {version!r}: {path}")
+    return path.read_text(encoding="utf-8").rstrip("\n")
 
 
 class Agent:
-    def __init__(self, store: Store, cv_text: str, profile: dict, client=None):
+    def __init__(self, store: Store, cv_text: str, profile: dict, client=None,
+                 model: str | None = None, prompt_version: str | None = None):
         self.store = store
         self.cv_text = cv_text
         self.profile = profile
+        self.model = model or MODEL
+        self.prompt_version = prompt_version or PROMPT_VERSION
+        self.prompt = load_prompt(self.prompt_version)  # fail early on a bad version
         if client is None:
             import anthropic
             client = anthropic.Anthropic()
         self.client = client
         self.saved: set[str] = set()
+        self.usage: dict[str, int] = empty_usage()  # summed over every API call of every run()
+        self.turns = 0  # API calls made
+
+    @property
+    def cost_usd(self) -> float | None:
+        return estimate_cost_usd(self.usage, self.model)
 
     # ---- tools ----
     def _list_new_jobs(self, _: dict) -> str:
@@ -106,7 +118,7 @@ class Agent:
             "summary": args.get("summary", ""),
             "strengths": args.get("strengths", [])[:3],
             "gaps": args.get("gaps", [])[:3],
-        })
+        }, prompt_version=self.prompt_version, model=self.model)
         self.saved.add(args["job_id"])
         return "saved"
 
@@ -131,13 +143,15 @@ class Agent:
             return 0
         messages = [{"role": "user", "content": "Score today's new jobs."}]
         p = self.profile
-        system = SYSTEM.format(roles=", ".join(p.get("target_roles", [])),
+        system = self.prompt.format(roles=", ".join(p.get("target_roles", [])),
                                allowed=", ".join(p.get("locations_allowed", [])) or "any",
                                blocked=", ".join(p.get("locations_blocked", [])) or "none")
-        for turn in range(MAX_TURNS):
+        for _ in range(MAX_TURNS):
             resp = self.client.messages.create(
-                model=MODEL, max_tokens=4096, system=system, tools=TOOLS, messages=messages,
+                model=self.model, max_tokens=4096, system=system, tools=TOOLS, messages=messages,
             )
+            self.turns += 1
+            add_usage(self.usage, getattr(resp, "usage", None))
             messages.append({"role": "assistant", "content": resp.content})
             tool_uses = [b for b in resp.content if b.type == "tool_use"]
             if not tool_uses:
@@ -153,5 +167,8 @@ class Agent:
                         block.pop("cache_control", None)
             results[-1]["cache_control"] = {"type": "ephemeral"}
             messages.append({"role": "user", "content": results})
-        log.info("Agent scored %d jobs in %d turns", len(self.saved), turn + 1)
+        cost = self.cost_usd
+        log.info("Agent scored %d jobs in %d turns (prompt %s, model %s); tokens %s; est. cost %s",
+                 len(self.saved), self.turns, self.prompt_version, self.model,
+                 self.usage, "unknown" if cost is None else f"${cost:.4f}")
         return len(self.saved)
