@@ -126,9 +126,10 @@ def main(argv=None) -> int:
             }, ensure_ascii=False) + "\n")
     with open(out / "labels.csv", "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["case_id", "label", "note"])
+        # company/title/location/url are only there to make labeling easy; loaders read case_id, label, note.
+        w.writerow(["case_id", "label", "note", "company", "title", "location", "url"])
         for _, r in picked:
-            w.writerow([r["job_id"], "", ""])
+            w.writerow([r["job_id"], "", "", r["company"], r["title"], r["location"] or "", r["url"] or ""])
 
     print(f"{len(picked)} of {len(rows)} jobs written to {out}/ (jobs.jsonl, labels.csv)")
     for s, k in Counter(s for s, _ in picked).items():

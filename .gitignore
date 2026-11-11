@@ -20,7 +20,7 @@ analytics/logs/
 analytics/dbt_packages/
 logs/
 analytics/.user.yml
-
+.vscode/
 # Evaluation: plain labels and local outputs stay local (labels.csv.enc is committed instead)
 eval/out/
 eval/dataset/labels.csv
