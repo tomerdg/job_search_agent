@@ -127,12 +127,19 @@ def _generic(url: str) -> dict | None:
         r.encoding = r.apparent_encoding
     page = r.text
     found = _jsonld_posting(page)
-    if found and len(found["description"]) > 200:
+    if found and len(found["description"]) >= 1000:
         return found
     title = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
-    body = re.sub(r"<(script|style|noscript|svg|nav|footer|header)[^>]*>.*?</\1>", " ", page, flags=re.S | re.I)
-    return {"title": clean_text(title.group(1)) if title else "", "location": "", "department": "",
-            "description": clean_text(body)}
+    code_free = re.sub(r"<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", page, flags=re.S | re.I)
+    # Dropping nav/header/footer removes menus, but some sites wrap the posting in a <header>;
+    # when that leaves little text, keep them.
+    body = clean_text(re.sub(r"<(nav|footer|header)[^>]*>.*?</\1>", " ", code_free, flags=re.S | re.I))
+    if len(body) < 1000:
+        body = max(body, clean_text(code_free), key=len)
+    if found and len(found["description"]) >= len(body):  # some JobPosting data is only a short summary
+        return found
+    return {"title": (found or {}).get("title") or (clean_text(title.group(1)) if title else ""),
+            "location": (found or {}).get("location", ""), "department": "", "description": body}
 
 
 def fetch_posting(url: str) -> dict | None:
