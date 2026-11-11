@@ -20,3 +20,10 @@ analytics/logs/
 analytics/dbt_packages/
 logs/
 analytics/.user.yml
+.vscode/
+# Evaluation: plain dataset and local outputs stay local (the .enc files are committed instead)
+eval/out/
+eval/dataset/labels.csv
+eval/dataset/jobs.jsonl
+mlruns/
+mlflow.db

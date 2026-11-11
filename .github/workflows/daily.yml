@@ -21,6 +21,8 @@ on:
     paths:
       - "jobagent/**"
       - "tests/**"
+      - "eval/**"
+      - "scripts/**"
       - "analytics/**"
       - "requirements*.txt"
       - "Dockerfile"
@@ -30,6 +32,8 @@ on:
     paths:
       - "jobagent/**"
       - "tests/**"
+      - "eval/**"
+      - "scripts/**"
       - "analytics/**"
       - "requirements*.txt"
       - "Dockerfile"
