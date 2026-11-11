@@ -21,8 +21,9 @@ analytics/dbt_packages/
 logs/
 analytics/.user.yml
 .vscode/
-# Evaluation: plain labels and local outputs stay local (labels.csv.enc is committed instead)
+# Evaluation: plain dataset and local outputs stay local (the .enc files are committed instead)
 eval/out/
 eval/dataset/labels.csv
+eval/dataset/jobs.jsonl
 mlruns/
 mlflow.db

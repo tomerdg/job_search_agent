@@ -7,13 +7,14 @@ or model change can be judged by numbers instead of by eye.
 
 | File | In git | What |
 |---|---|---|
-| `dataset/jobs.jsonl` | yes | Public job postings, one JSON object per line: `case_id, company, title, location, department, url, description` (description trimmed to `JD_MAX_CHARS`). |
-| `dataset/labels.csv.enc` | yes, encrypted | The owner's labels, encrypted with the `DB_PASSPHRASE` secret (`scripts/dbcrypt.sh`). |
-| `dataset/labels.csv` | **no** | The plain labels: `case_id,label,note`. Local only. |
+| `dataset/jobs.jsonl.enc` | yes, encrypted | Job postings, one JSON object per line: `case_id, company, title, location, department, url, description` (description trimmed to `JD_MAX_CHARS`). |
+| `dataset/labels.csv.enc` | yes, encrypted | The owner's labels: `case_id,label,note` (extra columns are ignored). |
+| `dataset/jobs.jsonl`, `dataset/labels.csv` | **no** | The plain copies. Local only. |
 
-The labels say which jobs the owner would apply to, so they are personal: they are committed only
-encrypted, and the tools print counts and case ids, never labels next to job text. CI decrypts them in
-memory with the same secret.
+Both files are personal: the labels say which jobs the owner would apply to, and the job list includes
+jobs the owner applied to. They are committed only encrypted with the `DB_PASSPHRASE` secret
+(`scripts/dbcrypt.sh`), and the tools print counts and case ids, never labels next to job text. CI
+decrypts them in memory with the same secret.
 
 ## Label definitions
 
@@ -57,8 +58,8 @@ Then:
 
 ```bash
 python -m eval.dataset check      # counts per label and any missing/blank/orphan rows
-DB_PASSPHRASE=... python -m eval.dataset encrypt   # writes labels.csv.enc; skipped when unchanged
+DB_PASSPHRASE=... python -m eval.dataset encrypt   # writes jobs.jsonl.enc and labels.csv.enc; each skipped when unchanged
 ```
 
-Commit `jobs.jsonl` and `labels.csv.enc`. On another machine, `DB_PASSPHRASE=... python -m eval.dataset decrypt`
-restores `labels.csv`.
+Commit the two `.enc` files. On another machine, `DB_PASSPHRASE=... python -m eval.dataset decrypt`
+restores the plain copies.

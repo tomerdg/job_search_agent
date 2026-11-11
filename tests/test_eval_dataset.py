@@ -39,12 +39,13 @@ def test_encrypt_roundtrip_and_skip_when_unchanged(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PASSPHRASE", "test-passphrase")
     plain, enc = tmp_path / "labels.csv", tmp_path / "labels.csv.enc"
     plain.write_text("case_id,label,note\na,fit,\n", encoding="utf-8")
-    assert ds.encrypt(plain, enc) is True
+    assert ds.enc_path(plain) == enc
+    assert ds.encrypt(plain) is True
     first = enc.read_bytes()
     assert b"fit" not in first
-    assert ds.encrypt(plain, enc) is False and enc.read_bytes() == first  # no new salt, no git diff
+    assert ds.encrypt(plain) is False and enc.read_bytes() == first  # no new salt, no git diff
     plain.unlink()
-    assert ds.load_labels(plain, enc) == {"a": {"label": "fit", "note": ""}}  # decrypted in memory
+    assert ds.load_labels(plain) == {"a": {"label": "fit", "note": ""}}  # decrypted in memory
     assert not plain.exists()
 
 
