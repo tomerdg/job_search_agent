@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import time
 import uuid
@@ -21,6 +22,14 @@ import duckdb
 from jobagent.models import Job
 
 log = logging.getLogger(__name__)
+
+# The digest only sends jobs scored at or above this. 59 since the first eval run (2026-11-12): at 50,
+# half the jobs above the line were not ones the owner would apply to. Override with env MIN_SCORE.
+DEFAULT_MIN_SCORE = 59
+
+
+def min_score() -> int:
+    return int(os.environ.get("MIN_SCORE") or DEFAULT_MIN_SCORE)  # unset or empty -> default
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -245,7 +254,7 @@ class Store:
             (int(score), json.dumps(analysis, ensure_ascii=False), prompt_version, model, job_id),
         )
 
-    def top_unsent(self, n: int = 3, min_score: int = 50) -> list[dict]:
+    def top_unsent(self, n: int = 3, min_score: int = DEFAULT_MIN_SCORE) -> list[dict]:
         return self._all(
             "SELECT * FROM jobs WHERE score >= ? AND notified_at IS NULL AND is_active "
             "ORDER BY score DESC, first_seen DESC, job_id LIMIT ?", (min_score, n)

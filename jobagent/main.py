@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from jobagent.db import open_store
+from jobagent.db import min_score, open_store
 from jobagent.fetchers import fetch_all
 from jobagent.filters import PreFilter
 from jobagent.notify import format_digest, notify
@@ -94,7 +94,7 @@ def run(store, args, sources: list[dict], profile: dict) -> None:
     elif not args.no_llm:
         log.warning("ANTHROPIC_API_KEY not set, skipping scoring")
 
-    top = store.top_unsent(n=3, min_score=int(os.environ.get("MIN_SCORE", "50")))
+    top = store.top_unsent(n=3, min_score=min_score())
     digest = format_digest(top, len(new_ids))
     if args.no_notify:
         print(digest)

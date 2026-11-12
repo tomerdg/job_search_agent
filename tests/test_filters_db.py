@@ -114,3 +114,13 @@ def test_migrates_old_sqlite_db(tmp_path):
     s = open_store(tmp_path / "jobs.db")
     assert s.path.endswith("jobs.duckdb")
     assert s.conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+
+
+def test_min_score_default_and_override(monkeypatch):
+    from jobagent.db import DEFAULT_MIN_SCORE, min_score
+    monkeypatch.delenv("MIN_SCORE", raising=False)
+    assert min_score() == DEFAULT_MIN_SCORE == 59
+    monkeypatch.setenv("MIN_SCORE", "")  # an unset Actions secret arrives as an empty string
+    assert min_score() == 59
+    monkeypatch.setenv("MIN_SCORE", "70")
+    assert min_score() == 70
