@@ -63,3 +63,32 @@ DB_PASSPHRASE=... python -m eval.dataset encrypt   # writes jobs.jsonl.enc and l
 
 Commit the two `.enc` files. On another machine, `DB_PASSPHRASE=... python -m eval.dataset decrypt`
 restores the plain copies.
+
+## Running an evaluation
+
+```bash
+pip install -r requirements.txt -r requirements-eval.txt
+python -m eval.evaluate --prompt-version v1 --model claude-sonnet-5-5 --repeats 1
+python -m eval.evaluate --prompt-version v2 --repeats 3 --baseline eval/dataset/baseline.json
+```
+
+Each run scores every labeled job with the production `Agent` (in a temporary database), prints a
+numbers-only metrics table, saves per-case scores to `eval/out/runs/` (git-ignored), and logs an MLflow
+run. One pass over the set costs about $0.80 with Sonnet; `--limit 15` is a cheap smoke test.
+
+The threshold defaults to the production `MIN_SCORE` (59). `--batch-seed` fixes which jobs share a
+conversation, so two prompts compared with the same seed see the same batches.
+
+## Experiment tracking (MLflow)
+
+Every run is logged to the `job-scoring` experiment in a local SQLite store (`mlflow.db`, git-ignored;
+set `MLFLOW_TRACKING_URI` to use a server): parameters (prompt version, model, repeats, dataset hash,
+threshold, git commit), all metrics, and artifacts (the prompt file, metrics JSON, the label x score-band
+confusion matrix as CSV and PNG, a score-by-label box plot). The per-case predictions CSV is logged only
+locally, never in CI.
+
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db          # browse runs at http://127.0.0.1:5000
+python -m eval.compare                                     # last 10 runs, best F1 first
+python -m eval.compare --last 30 --by prompt_version,model # mean per prompt and model
+```

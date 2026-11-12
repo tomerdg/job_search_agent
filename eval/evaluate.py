@@ -14,7 +14,8 @@ batches, which keeps prompt-vs-prompt comparisons paired.
 
 Needs ANTHROPIC_API_KEY, the CV (CV_TEXT, or --cv, or cv_path in the profile) and the profile
 (PROFILE_YAML or config/profile.yaml). The output is numbers only. Per-case scores go to
-eval/out/ (git-ignored); the analysis text the agent writes is never saved.
+eval/out/ (git-ignored); the analysis text the agent writes is never saved. Every run is also
+logged to MLflow (eval/tracking.py) unless --no-mlflow.
 """
 from __future__ import annotations
 
@@ -168,6 +169,7 @@ def main(argv=None) -> int:
                     help=f"save this run as the baseline (default {BASELINE_PATH.relative_to(ROOT)}, git-ignored;"
                          " then run `python -m eval.dataset encrypt`)")
     ap.add_argument("--limit", type=int, help="only the first N cases (quick smoke test)")
+    ap.add_argument("--no-mlflow", action="store_true", help="do not log the run to MLflow")
     args = ap.parse_args(argv)
 
     jobs, labels = ds.load_jobs(), ds.load_labels()
@@ -199,6 +201,13 @@ def main(argv=None) -> int:
     print(table)
     print(M.confusion(M.per_case(preds)).to_string())
     print(f"\nSaved to {run_dir.relative_to(ROOT)}")
+    if not args.no_mlflow:
+        from eval import tracking
+        try:
+            run_id = tracking.log_run(preds, info, metrics, comparison, args.threshold)
+            print(f"MLflow run {run_id} in experiment '{tracking.EXPERIMENT}' ({tracking.tracking_uri()})")
+        except Exception as exc:  # noqa: BLE001  the evaluation itself succeeded; do not lose it
+            print(f"warning: MLflow logging failed: {exc}")
     if args.write_baseline:
         print(f"Baseline written to {args.write_baseline}; encrypt it with `python -m eval.dataset encrypt`.")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
