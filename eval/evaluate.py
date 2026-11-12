@@ -36,7 +36,7 @@ from eval import metrics as M
 from jobagent import agent as agent_mod
 from jobagent.agent import Agent
 from jobagent.costs import add_usage, empty_usage, estimate_cost_usd
-from jobagent.db import Store
+from jobagent.db import DEFAULT_MIN_SCORE, Store, min_score
 from jobagent.models import Job
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -160,8 +160,8 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default=agent_mod.MODEL)
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--batch-seed", type=int, default=0)
-    ap.add_argument("--threshold", type=float, default=float(os.environ.get("MIN_SCORE", "50")),
-                    help="production threshold (MIN_SCORE, default 50)")
+    ap.add_argument("--threshold", type=float, default=float(min_score()),
+                    help=f"production threshold (env MIN_SCORE, default {DEFAULT_MIN_SCORE})")
     ap.add_argument("--cv", help="CV file (default: CV_TEXT, else cv_path in the profile)")
     ap.add_argument("--baseline", type=Path, help="compare with this baseline (.json, or its .enc)")
     ap.add_argument("--write-baseline", nargs="?", const=BASELINE_PATH, type=Path,
