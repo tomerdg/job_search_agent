@@ -1,0 +1,14 @@
+{
+  "jobPostingInfo": {
+    "id": "abc123",
+    "title": "Data Engineer",
+    "jobDescription": "<h2>Job Description:</h2><p>Build <b>data pipelines</b> in Python &amp; SQL.</p><ul><li>Airflow</li></ul>",
+    "location": "Israel, Petah-Tikva",
+    "additionalLocations": ["Israel, Haifa"],
+    "postedOn": "Posted 3 Days Ago",
+    "startDate": "2026-11-12",
+    "timeType": "Full time",
+    "jobReqId": "JR0001",
+    "externalUrl": "https://acme.wd1.myworkdayjobs.com/External/job/Israel-Petah-Tikva/Data-Engineer_JR0001"
+  }
+}

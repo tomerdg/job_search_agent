@@ -28,9 +28,11 @@ class PreFilter:
         loc = (location or "").strip()
         if not loc:
             return True  # unknown: let the model decide
-        if any(p.search(loc) for p in self.allowed):
+        # Some boards hyphenate place names ("Petah-Tikva"); match either spelling.
+        variants = {loc, loc.replace("-", " ")}
+        if any(p.search(v) for p in self.allowed for v in variants):
             return True
-        if any(p.search(loc) for p in self.blocked):
+        if any(p.search(v) for p in self.blocked for v in variants):
             return False
         return False  # a named place outside the target area
 

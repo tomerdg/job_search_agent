@@ -5,7 +5,7 @@ import time
 
 from jobagent.models import Job
 
-from . import adam, comeet, greenhouse, topmatch
+from . import adam, comeet, greenhouse, topmatch, workday
 
 log = logging.getLogger(__name__)
 
@@ -14,6 +14,7 @@ FETCHERS = {
     "topmatch": topmatch.fetch,
     "comeet": comeet.fetch,
     "greenhouse": greenhouse.fetch,
+    "workday": workday.fetch,
 }
 
 

@@ -1,0 +1,12 @@
+{
+  "total": 3,
+  "jobPostings": [
+    {"title": "Data Engineer", "externalPath": "/job/Israel-Petah-Tikva/Data-Engineer_JR0001",
+     "locationsText": "2 Locations", "postedOn": "Posted 3 Days Ago", "bulletFields": ["JR0001"]},
+    {"title": "BI Analyst", "externalPath": "/job/Israel-Haifa/BI-Analyst_JR0002",
+     "locationsText": "Israel, Haifa", "postedOn": "Posted Today", "bulletFields": ["JR0002"]},
+    {"title": "Firmware Engineer", "externalPath": "/job/Israel-Haifa/Firmware-Engineer_JR0003",
+     "locationsText": "Israel, Haifa", "postedOn": "Posted 30+ Days Ago", "bulletFields": ["JR0003"]}
+  ],
+  "facets": []
+}

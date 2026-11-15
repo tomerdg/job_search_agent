@@ -21,6 +21,13 @@ def test_prefilter_role_and_location():
     assert not pf("Biology lab tech", "", "תל אביב")     # 'BI' must be a whole word
 
 
+def test_prefilter_matches_hyphenated_place_names():
+    pf = PreFilter({**PROFILE, "locations_allowed": ["ramat gan"]})
+    assert pf("Data Engineer", "", "Israel, Ramat-Gan")
+    assert pf("Data Engineer", "", "Israel, Haifa | Israel, Ramat-Gan")
+    assert not pf("Data Engineer", "", "Israel, Haifa")
+
+
 def _job(eid, title="Data Engineer"):
     return Job(source="adam", company="Acme", external_id=eid, title=title, url="u", location="רמת גן")
 

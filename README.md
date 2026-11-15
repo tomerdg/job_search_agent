@@ -24,7 +24,7 @@ flowchart LR
         direction LR
         subgraph D["Docker container"]
             direction TB
-            F["Fetchers<br/>Adam · TopMatch · Comeet · Greenhouse"]
+            F["Fetchers<br/>Adam · TopMatch · Comeet · Greenhouse · Workday"]
             R[("DuckDB raw layer<br/>jobs · runs<br/>job_observations · source_runs")]
             P["Pre-filter<br/>role keywords + location"]
             A["Claude agent<br/>list_new_jobs · read_job_description<br/>read_cv · save_match"]
@@ -48,7 +48,7 @@ flowchart LR
 
 **Go to the source, not LinkedIn.** LinkedIn blocks automated access and its terms forbid scraping, and many
 companies post on their own careers site first, or only there. Those sites usually sit on a handful of applicant
-tracking systems (Adam, TopMatch, Comeet, Greenhouse) whose pages call public JSON or HTML endpoints. One small
+tracking systems (Adam, TopMatch, Comeet, Greenhouse, Workday) whose pages call public JSON or HTML endpoints. One small
 fetcher per ATS covers every company that uses it, so adding a company is a config line, not code.
 
 **Filter before the LLM.** Most postings (sales, QA, customer service, other cities) are obviously irrelevant.
