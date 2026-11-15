@@ -80,6 +80,9 @@ def test_summarize_keys():
     m = M.summarize(df, threshold=50)
     assert m["n_cases"] == 6 and m["f1_at_threshold"] == pytest.approx(0.8) and m["roc_auc_fit"] == 1.0
     assert m["spearman"] > 0.9 and "score_std_mean" not in m  # one repeat: no stability block
+    # at 50, fit-only counts the maybe (70) as a false positive; the fit-or-maybe view counts it as a hit
+    assert m["precision_at_threshold"] == pytest.approx(2 / 3)
+    assert m["precision_fit_or_maybe_at_threshold"] == 1.0 and m["recall_fit_or_maybe_at_threshold"] == 1.0
 
 
 def test_compare_detects_worse_and_bootstrap_is_seeded():

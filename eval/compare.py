@@ -13,7 +13,8 @@ import pandas as pd
 from eval import tracking
 
 PARAMS = ["prompt_version", "model", "repeats"]
-METRICS = ["f1_at_threshold", "precision_at_threshold", "recall_at_threshold", "roc_auc_fit", "spearman",
+METRICS = ["f1_at_threshold", "precision_at_threshold", "recall_at_threshold",
+           "precision_fit_or_maybe_at_threshold", "recall_fit_or_maybe_at_threshold", "roc_auc_fit", "spearman",
            "precision_at_3", "f1_at_best", "best_threshold", "score_mean_fit", "score_mean_maybe",
            "score_std_mean", "cost_usd_per_job"]
 

@@ -122,7 +122,11 @@ def summarize(preds: pd.DataFrame, threshold: float, seed: int = 0) -> dict:
     m.update({f"{k}_at_threshold": v for k, v in binary(df["score"], fit, threshold).items()})
     best = best_threshold(df["score"], fit)
     m.update({"best_threshold": best["threshold"], "f1_at_best": best["f1"]})
-    m["recall_fit_or_maybe_at_threshold"] = binary(df["score"], considered, threshold)["recall"]
+    # "Wanted" view: the digest should show maybe jobs too, so here maybe counts as a hit, not a false positive.
+    wanted = binary(df["score"], considered, threshold)
+    m["precision_fit_or_maybe_at_threshold"] = wanted["precision"]
+    m["recall_fit_or_maybe_at_threshold"] = wanted["recall"]
+    m["f1_fit_or_maybe_at_threshold"] = wanted["f1"]
     m["roc_auc_fit"] = roc_auc(df["score"], fit)
     m["spearman"] = spearman(df["score"], df["label"])
     m["precision_at_3"] = precision_at_k(df, 3, 15, seed)

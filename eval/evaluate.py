@@ -158,7 +158,8 @@ def markdown_table(metrics: dict, info: dict, comparison: dict | None) -> str:
         return f"{v:.3f}" if isinstance(v, float) else str(v)
     keys = ["n_cases", "n_fit", "n_maybe", "n_no_fit", "threshold", "precision_at_threshold",
             "recall_at_threshold", "f1_at_threshold", "best_threshold", "f1_at_best",
-            "recall_fit_or_maybe_at_threshold", "roc_auc_fit", "spearman", "precision_at_3",
+            "precision_fit_or_maybe_at_threshold", "recall_fit_or_maybe_at_threshold",
+            "f1_fit_or_maybe_at_threshold", "roc_auc_fit", "spearman", "precision_at_3",
             "score_mean_fit", "score_mean_maybe", "score_mean_no_fit", "mae_vs_target",
             "score_std_mean", "decision_flip_rate"]
     lines = [f"### Scoring eval: prompt `{info['prompt_version']}`, model `{info['model']}`, "
@@ -219,6 +220,7 @@ def main(argv=None) -> int:
     run_dir = OUT_DIR / f"{datetime.now():%Y%m%dT%H%M%S}-{args.prompt_version}-{args.model}"
     run_dir.mkdir(parents=True, exist_ok=True)
     preds[["case_id", "repeat", "score"]].to_csv(run_dir / "predictions.csv", index=False)
+    (run_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")  # tokens and cost
 
     metrics = M.summarize(preds, args.threshold)
     comparison = None
