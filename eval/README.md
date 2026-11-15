@@ -77,7 +77,12 @@ numbers-only metrics table, saves per-case scores to `eval/out/runs/` (git-ignor
 run. One pass over the set costs about $0.80 with Sonnet; `--limit 15` is a cheap smoke test.
 
 The threshold defaults to the production `MIN_SCORE` (59). `--batch-seed` fixes which jobs share a
-conversation, so two prompts compared with the same seed see the same batches.
+conversation, so two prompts compared with the same seed see the same batches. By default every repeat
+uses that same seed, so `score_std_mean` and `decision_flip_rate` measure sampling noise only.
+`--vary-batches` gives repeat r the seed `batch-seed + r`, so they also include the effect of which jobs
+share a batch (closer to production, where batches change daily). Use it for stability runs, not for
+baseline comparisons: the baseline records its `batch_seed`, and `--baseline` warns when the run is not
+batch-paired with it.
 
 ## Experiment tracking (MLflow)
 

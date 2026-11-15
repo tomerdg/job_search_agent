@@ -94,6 +94,15 @@ def test_compare_detects_worse_and_bootstrap_is_seeded():
     assert same["verdict"] == "no significant difference" and same["wilcoxon_p"] == 1.0
 
 
+def test_compare_accepts_label_free_baseline():
+    """A saved baseline (baseline_json) holds case_id/repeat/score only; labels come from the current run."""
+    labels = ["fit"] * 10 + ["no_fit"] * 10
+    base = preds([90] * 10 + [20] * 10, labels)
+    worse = preds([40] * 10 + [60] * 10, labels)
+    stripped = base[["case_id", "repeat", "score"]]
+    assert M.compare(worse, stripped, threshold=50) == M.compare(worse, base, threshold=50)
+
+
 class FakeScorer:
     """Plays the agent protocol: list jobs, then save a score for each from a title rule, then DONE.
     Records the job titles of each conversation so tests can check batching."""
@@ -159,3 +168,32 @@ def test_baseline_roundtrip_is_numbers_only(tmp_path):
     assert set(back.columns) == {"case_id", "repeat", "score"} and len(back) == 6
     text = path.read_text(encoding="utf-8")
     assert "Data Engineer" not in text and '"label"' not in text
+
+
+def test_band_of_handles_fractional_scores():
+    """Repeat-averaged scores fall between the integer bands."""
+    assert M.band_of(29.67) == "0-29" and M.band_of(30) == "30-59"
+    assert M.band_of(84.5) == "60-84" and M.band_of(100) == "85-100" and M.band_of(0) == "0-29"
+
+
+def test_vary_batches_changes_batches_per_repeat():
+    jobs, labels = _cases(30)
+    fake = FakeScorer()
+    p, info = E.run(jobs, labels, "CV", {}, "m", "v1", repeats=2, batch_seed=3, client=fake, vary_batches=True)
+    assert len(p) == 60 and info["vary_batches"] is True and info["batch_seed"] == 3
+    assert fake.batches[:2] != fake.batches[2:]  # repeat 0 uses seed 3, repeat 1 uses seed 4
+    same = FakeScorer()
+    E.run(jobs, labels, "CV", {}, "m", "v1", batch_seed=4, client=same)
+    assert same.batches == fake.batches[2:]
+
+
+def test_baseline_records_seed_and_warns_when_not_paired():
+    jobs, labels = _cases(6)
+    p, info = E.run(jobs, labels, "CV", {}, "m", "v1", batch_seed=2, client=FakeScorer())
+    base = E.baseline_json(p, info, M.summarize(p, 50))
+    assert base["batch_seed"] == 2 and base["vary_batches"] is False and base["repeats"] == 1
+    assert E.baseline_warnings(base, info) == []
+    assert "differs" in E.baseline_warnings(base, {**info, "batch_seed": 0})[0]
+    assert "--vary-batches" in E.baseline_warnings(base, {**info, "vary_batches": True})[0]
+    legacy = {k: v for k, v in base.items() if k not in ("batch_seed", "vary_batches", "repeats")}
+    assert "does not record" in E.baseline_warnings(legacy, info)[0]

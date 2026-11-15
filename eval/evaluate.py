@@ -10,7 +10,9 @@ tests exactly what production runs (same tools, prompt file, batching and save p
 
 Batches: the agent scores BATCH jobs per conversation and a score can depend on the other jobs in
 the conversation, so the order is fixed by --batch-seed. Every run with the same seed sees the same
-batches, which keeps prompt-vs-prompt comparisons paired.
+batches, which keeps prompt-vs-prompt comparisons paired. With --vary-batches, repeat r uses seed
+batch_seed + r instead, so the stability metrics include the effect of batch composition (as in
+production, where batches change daily); such a run is not batch-paired with a baseline.
 
 Needs ANTHROPIC_API_KEY, the CV (CV_TEXT, or --cv, or cv_path in the profile) and the profile
 (PROFILE_YAML or config/profile.yaml). The output is numbers only. Per-case scores go to
@@ -95,13 +97,16 @@ def score_once(jobs: list[dict], cv: str, profile: dict, model: str, prompt_vers
 
 
 def run(jobs: list[dict], labels: dict[str, dict], cv: str, profile: dict, model: str, prompt_version: str,
-        repeats: int = 1, batch_seed: int = 0, client=None) -> tuple[pd.DataFrame, dict]:
-    """Score every case `repeats` times. Returns (predictions, run info: usage, cost, timing, coverage)."""
+        repeats: int = 1, batch_seed: int = 0, client=None, vary_batches: bool = False) -> tuple[pd.DataFrame, dict]:
+    """Score every case `repeats` times. Returns (predictions, run info: usage, cost, timing, coverage).
+
+    vary_batches: repeat r uses seed batch_seed + r (different batches per repeat) instead of batch_seed."""
     jobs = [j for j in jobs if j["case_id"] in labels and labels[j["case_id"]]["label"] in M.ORDINAL]
     usage, turns, rows = empty_usage(), 0, []
     t0 = time.time()
     for r in range(repeats):
-        scores, u, t = score_once(jobs, cv, profile, model, prompt_version, batch_seed, client)
+        seed = batch_seed + r if vary_batches else batch_seed
+        scores, u, t = score_once(jobs, cv, profile, model, prompt_version, seed, client)
         add_usage(usage, u)
         turns += t
         rows += [{"case_id": cid, "repeat": r, "score": s} for cid, s in scores.items()]
@@ -111,6 +116,7 @@ def run(jobs: list[dict], labels: dict[str, dict], cv: str, profile: dict, model
     n_scored = len(preds)
     cost = estimate_cost_usd(usage, model)
     info = {"prompt_version": prompt_version, "model": model, "repeats": repeats, "batch_seed": batch_seed,
+            "vary_batches": vary_batches,
             "n_cases_in_set": len(jobs), "coverage": n_scored / (len(jobs) * repeats) if jobs else 0.0,
             "api_calls": turns, **{f"tokens_{k}": v for k, v in usage.items()},
             "tokens_per_job": sum(usage.values()) / n_scored if n_scored else 0.0,
@@ -127,7 +133,22 @@ def load_baseline(path: Path) -> tuple[dict, pd.DataFrame]:
 def baseline_json(preds: pd.DataFrame, info: dict, metrics: dict) -> dict:
     """Numbers and case ids only."""
     return {"prompt_version": info["prompt_version"], "model": info["model"], "created": datetime.now().isoformat(),
+            "batch_seed": info["batch_seed"], "vary_batches": info["vary_batches"], "repeats": info["repeats"],
             "metrics": metrics, "predictions": preds[["case_id", "repeat", "score"]].to_dict("records")}
+
+
+def baseline_warnings(base: dict, info: dict) -> list[str]:
+    """Reasons the comparison with this baseline is not paired by batch (empty when it is)."""
+    warnings = []
+    if info.get("vary_batches"):
+        warnings.append("this run used --vary-batches, so its batches differ from the baseline's")
+    if base.get("vary_batches"):
+        warnings.append("the baseline was run with --vary-batches")
+    if "batch_seed" not in base:
+        warnings.append("the baseline does not record its batch_seed; re-save it with --write-baseline")
+    elif base["batch_seed"] != info["batch_seed"]:
+        warnings.append(f"batch_seed {info['batch_seed']} differs from the baseline's {base['batch_seed']}")
+    return warnings
 
 
 def markdown_table(metrics: dict, info: dict, comparison: dict | None) -> str:
@@ -150,6 +171,7 @@ def markdown_table(metrics: dict, info: dict, comparison: dict | None) -> str:
                   f"(Wilcoxon p={comparison['wilcoxon_p']:.3f} on {comparison['n_paired']} cases, "
                   f"MAE delta {comparison['mae_delta']:+.1f}, F1 delta {comparison['f1_delta']:+.3f}, "
                   f"95% CI [{comparison['f1_delta_ci_low']:+.3f}, {comparison['f1_delta_ci_high']:+.3f}])"]
+        lines += [f"\n> warning: not batch-paired: {w}" for w in comparison.get("warnings", [])]
     return "\n".join(lines) + "\n"
 
 
@@ -161,6 +183,9 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default=agent_mod.MODEL)
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--batch-seed", type=int, default=0)
+    ap.add_argument("--vary-batches", action="store_true",
+                    help="repeat r uses seed batch-seed + r, so stability includes batch-composition effects"
+                         " (not batch-paired with a baseline)")
     ap.add_argument("--threshold", type=float, default=float(min_score()),
                     help=f"production threshold (env MIN_SCORE, default {DEFAULT_MIN_SCORE})")
     ap.add_argument("--cv", help="CV file (default: CV_TEXT, else cv_path in the profile)")
@@ -178,19 +203,29 @@ def main(argv=None) -> int:
     profile = load_profile()
     cv = load_cv_text(profile, args.cv)
 
-    preds, info = run(jobs, labels, cv, profile, args.model, args.prompt_version, args.repeats, args.batch_seed)
+    base_meta = base_preds = None
+    if args.baseline:  # load and check before paying for the run
+        base_meta, base_preds = load_baseline(args.baseline)
+        early = baseline_warnings(base_meta, {"batch_seed": args.batch_seed, "vary_batches": args.vary_batches})
+        for w in early:
+            print(f"warning: comparison will not be batch-paired: {w}", file=sys.stderr)
+
+    preds, info = run(jobs, labels, cv, profile, args.model, args.prompt_version, args.repeats, args.batch_seed,
+                      vary_batches=args.vary_batches)
     if preds.empty:
         print("No case was scored; check the API key and the log above.")
         return 1
-    metrics = M.summarize(preds, args.threshold)
-    comparison = None
-    if args.baseline:
-        _, base_preds = load_baseline(args.baseline)
-        comparison = M.compare(preds, base_preds, args.threshold)
-
+    # Save the paid-for predictions before anything downstream can fail.
     run_dir = OUT_DIR / f"{datetime.now():%Y%m%dT%H%M%S}-{args.prompt_version}-{args.model}"
     run_dir.mkdir(parents=True, exist_ok=True)
     preds[["case_id", "repeat", "score"]].to_csv(run_dir / "predictions.csv", index=False)
+
+    metrics = M.summarize(preds, args.threshold)
+    comparison = None
+    if args.baseline:
+        comparison = {**M.compare(preds, base_preds, args.threshold),
+                      "warnings": baseline_warnings(base_meta, info)}
+
     M.confusion(M.per_case(preds)).to_csv(run_dir / "confusion.csv")
     (run_dir / "metrics.json").write_text(json.dumps(
         {"info": info, "metrics": metrics, "comparison": comparison}, indent=2), encoding="utf-8")

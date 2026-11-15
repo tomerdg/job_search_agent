@@ -107,7 +107,8 @@ def log_run(preds: pd.DataFrame, info: dict, metrics: dict, comparison: dict | N
     with mlflow.start_run(run_name=name) as run:
         mlflow.log_params({
             "prompt_version": info["prompt_version"], "model": info["model"], "repeats": info["repeats"],
-            "batch_seed": info["batch_seed"], "n_cases": metrics["n_cases"], "threshold": threshold,
+            "batch_seed": info["batch_seed"],
+            "vary_batches": info.get("vary_batches", False), "n_cases": metrics["n_cases"], "threshold": threshold,
             "dataset_hash": dataset_hash(), "git_sha": git_sha(),
         })
         numeric = {**metrics, **info, **{f"vs_baseline_{k}": v for k, v in (comparison or {}).items()}}
@@ -116,6 +117,7 @@ def log_run(preds: pd.DataFrame, info: dict, metrics: dict, comparison: dict | N
         tags = {"trigger": "ci" if in_ci() else "local"}
         if comparison:
             tags["vs_baseline"] = comparison["verdict"]
+            tags["vs_baseline_paired"] = str(not comparison.get("warnings"))
         if pr_number():
             tags["pr"] = pr_number()
         mlflow.set_tags(tags)

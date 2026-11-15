@@ -69,7 +69,8 @@ def precision_at_k(df: pd.DataFrame, k: int = 3, day_size: int = 15, seed: int =
 
 
 def band_of(score: float) -> str:
-    lo, hi = next(b for b in BANDS if b[0] <= score <= b[1])
+    # By lower bound only: repeat-averaged scores are fractional (e.g. 29.67) and fall between bands.
+    lo, hi = next(b for b in reversed(BANDS) if score >= b[0])
     return f"{lo}-{hi}"
 
 
@@ -138,8 +139,10 @@ def compare(current: pd.DataFrame, baseline: pd.DataFrame, threshold: float,
     - Bootstrap 95% CI of the difference in F1 at the threshold (current - baseline), resampling cases.
     verdict is "better" / "worse" when the Wilcoxon test is significant, else "no significant difference".
     """
-    cur, base = per_case(current), per_case(baseline)
-    both = cur.merge(base[["case_id", "score"]], on="case_id", suffixes=("", "_base"))
+    # The saved baseline holds case ids and scores only (no labels), so labels come from `current`.
+    cur = per_case(current)
+    base = baseline.groupby("case_id", as_index=False)["score"].mean()
+    both = cur.merge(base, on="case_id", suffixes=("", "_base"))
     err_cur = abs_error(both)
     err_base = abs_error(both.assign(score=both["score_base"]))
     diff = err_cur - err_base
