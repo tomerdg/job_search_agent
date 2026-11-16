@@ -90,7 +90,8 @@ def _plots(per_case: pd.DataFrame, out: Path) -> list[Path]:
     return [out / "confusion.png", out / "score_by_label.png"]
 
 
-def log_run(preds: pd.DataFrame, info: dict, metrics: dict, comparison: dict | None, threshold: float) -> str:
+def log_run(preds: pd.DataFrame, info: dict, metrics: dict, comparison: dict | None, threshold: float,
+            extra_tags: dict | None = None) -> str:
     """Log one evaluation as an MLflow run. Returns the run id."""
     import mlflow
 
@@ -120,6 +121,7 @@ def log_run(preds: pd.DataFrame, info: dict, metrics: dict, comparison: dict | N
             tags["vs_baseline_paired"] = str(not comparison.get("warnings"))
         if pr_number():
             tags["pr"] = pr_number()
+        tags.update(extra_tags or {})
         mlflow.set_tags(tags)
 
         per_case = M.per_case(preds)

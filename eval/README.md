@@ -98,6 +98,36 @@ python -m eval.compare                                     # last 10 runs, best 
 python -m eval.compare --last 30 --by prompt_version,model # mean per prompt and model
 ```
 
+## CI quality gate
+
+`.github/workflows/eval.yml` runs on every PR that changes `jobagent/agent.py`, `jobagent/costs.py`,
+`jobagent/prompts/`, `eval/` (not its Markdown) or `requirements-eval.txt`, and on demand from the Actions
+tab (choose prompt version, model and repeats). It runs:
+
+```bash
+python -m eval.evaluate --repeats 1 --baseline eval/dataset/baseline.json --gate
+```
+
+The gate (`eval/gate.py`, thresholds at the top of the file) fails the PR when:
+
+- coverage is below 98% (the agent did not score every job), or
+- a floor is missed at the production threshold: precision for fit-or-maybe 0.80, recall for fit-or-maybe
+  0.90, recall for fit 0.85, ROC AUC 0.90, or
+- the run is significantly worse than the baseline (paired Wilcoxon on per-case error, p < 0.05).
+
+It always prints which rule passed or failed, in the log and in the Job Summary. A run costs about $0.70.
+The dataset, labels and baseline are decrypted in memory with `DB_PASSPHRASE`; the CV and profile come from
+the `CV_TEXT` and `PROFILE_YAML` secrets. Without them (a PR from a fork) the job is skipped, not failed.
+Only numbers are uploaded (`eval-metrics` artifact: metrics.json, info.json, confusion.csv); per-case
+scores are not.
+
+After merging an intentional improvement, refresh the baseline so later PRs are compared with it:
+
+```bash
+python -m eval.evaluate --prompt-version <new> --repeats 3 --write-baseline
+DB_PASSPHRASE=... python -m eval.dataset encrypt    # then commit eval/dataset/baseline.json.enc
+```
+
 ## Experiment: prompt v1 vs v2, and a cheaper model (2026-11-12 to 2026-11-15)
 
 82 labeled jobs (15 fit, 8 maybe, 59 no_fit), threshold 59, 3 repeats per arm, same batch seed. v2
