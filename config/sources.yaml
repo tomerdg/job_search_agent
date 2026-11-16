@@ -77,3 +77,12 @@ sources:
     sector: tech
     type: greenhouse
     board: nanit
+
+  # ---- Workday (*.myworkdayjobs.com) ----
+  # `facets` take the ids from the careers page URL query, e.g. ?locations=<id>.
+  - company: Intel
+    sector: tech
+    type: workday
+    url: https://intel.wd1.myworkdayjobs.com/External
+    facets:
+      locations: [1e4a4eb3adf101aaeda8a474bf818ecd]
