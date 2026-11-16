@@ -196,6 +196,8 @@ def main(argv=None) -> int:
                          " then run `python -m eval.dataset encrypt`)")
     ap.add_argument("--limit", type=int, help="only the first N cases (quick smoke test)")
     ap.add_argument("--no-mlflow", action="store_true", help="do not log the run to MLflow")
+    ap.add_argument("--gate", action="store_true",
+                    help="apply the quality gate (eval/gate.py) and exit 1 when it fails; use with --baseline")
     args = ap.parse_args(argv)
 
     jobs, labels = ds.load_jobs(), ds.load_labels()
@@ -228,20 +230,30 @@ def main(argv=None) -> int:
         comparison = {**M.compare(preds, base_preds, args.threshold),
                       "warnings": baseline_warnings(base_meta, info)}
 
+    gate_ok, gate_lines = (None, None)
+    if args.gate:
+        from eval import gate
+        gate_ok, gate_lines = gate.decide(metrics, info, comparison)
+
     M.confusion(M.per_case(preds)).to_csv(run_dir / "confusion.csv")
     (run_dir / "metrics.json").write_text(json.dumps(
-        {"info": info, "metrics": metrics, "comparison": comparison}, indent=2), encoding="utf-8")
+        {"info": info, "metrics": metrics, "comparison": comparison,
+         "gate": None if gate_ok is None else {"passed": gate_ok, "reasons": gate_lines}}, indent=2),
+        encoding="utf-8")
     if args.write_baseline:
         args.write_baseline.write_text(json.dumps(baseline_json(preds, info, metrics)), encoding="utf-8")
 
     table = markdown_table(metrics, info, comparison)
+    if gate_ok is not None:
+        table += "\n" + gate.markdown(gate_ok, gate_lines)
     print(table)
     print(M.confusion(M.per_case(preds)).to_string())
     print(f"\nSaved to {run_dir.relative_to(ROOT)}")
     if not args.no_mlflow:
         from eval import tracking
         try:
-            run_id = tracking.log_run(preds, info, metrics, comparison, args.threshold)
+            run_id = tracking.log_run(preds, info, metrics, comparison, args.threshold,
+                                      extra_tags=None if gate_ok is None else {"gate": "pass" if gate_ok else "fail"})
             print(f"MLflow run {run_id} in experiment '{tracking.EXPERIMENT}' ({tracking.tracking_uri()})")
         except Exception as exc:  # noqa: BLE001  the evaluation itself succeeded; do not lose it
             print(f"warning: MLflow logging failed: {exc}")
@@ -250,6 +262,9 @@ def main(argv=None) -> int:
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
             f.write(table)
+    if gate_ok is False:
+        print("Quality gate FAILED (see the reasons above).", file=sys.stderr)
+        return 1
     return 0
 
 

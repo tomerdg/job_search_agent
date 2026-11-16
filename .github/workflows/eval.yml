@@ -1,0 +1,100 @@
+name: scoring-eval
+
+# Quality gate for the LLM scoring agent: runs the real agent on the labeled set (eval/dataset) and fails
+# the PR when scoring quality drops below the floors in eval/gate.py or is significantly worse than the
+# baseline. One run costs about $0.70 in API calls, so it runs only when the scoring code, a prompt or
+# the eval itself changes.
+#
+# Personal data stays out of the log and artifacts:
+#   dataset, labels and baseline are committed encrypted and decrypted in memory with DB_PASSPHRASE;
+#   the CV and profile come from the CV_TEXT and PROFILE_YAML secrets;
+#   only metrics (numbers) reach the log, the Job Summary and the artifact. Per-case scores (CV-derived)
+#   are never uploaded.
+# Without the secrets (e.g. a PR from a fork) the job is skipped, not failed.
+
+on:
+  pull_request:
+    paths:
+      - "jobagent/agent.py"
+      - "jobagent/costs.py"
+      - "jobagent/prompts/**"
+      - "eval/**"
+      - "!eval/**/*.md"
+      - "requirements-eval.txt"
+      - ".github/workflows/eval.yml"
+  workflow_dispatch:
+    inputs:
+      prompt_version:
+        description: "Prompt file in jobagent/prompts (without .txt)"
+        default: "v1"
+      model:
+        description: "Claude model id (empty = the production default)"
+        default: ""
+      repeats:
+        description: "Passes over the set"
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scoring-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HAS_SECRETS: ${{ secrets.ANTHROPIC_API_KEY != '' && secrets.DB_PASSPHRASE != '' && secrets.CV_TEXT != '' && secrets.PROFILE_YAML != '' }}
+    steps:
+      - name: Skip without secrets
+        if: env.HAS_SECRETS != 'true'
+        run: echo "::notice::Scoring eval skipped - ANTHROPIC_API_KEY, DB_PASSPHRASE, CV_TEXT or PROFILE_YAML is not available (e.g. a PR from a fork)."
+
+      - uses: actions/checkout@v4
+        if: env.HAS_SECRETS == 'true'
+
+      - uses: actions/setup-python@v5
+        if: env.HAS_SECRETS == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-eval.txt
+
+      - name: Install
+        if: env.HAS_SECRETS == 'true'
+        run: pip install -r requirements.txt -r requirements-eval.txt
+
+      - name: Evaluate and gate
+        if: env.HAS_SECRETS == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
+          CV_TEXT: ${{ secrets.CV_TEXT }}
+          PROFILE_YAML: ${{ secrets.PROFILE_YAML }}
+          MLFLOW_DISABLE_AGENT_HINT: "1"
+          PROMPT_VERSION: ${{ inputs.prompt_version || 'v1' }}
+          MODEL: ${{ inputs.model }}
+          REPEATS: ${{ inputs.repeats || '1' }}
+        run: |
+          args=(--prompt-version "$PROMPT_VERSION" --repeats "$REPEATS" --gate
+                --baseline eval/dataset/baseline.json)
+          [ -n "$MODEL" ] && args+=(--model "$MODEL")
+          python -m eval.evaluate "${args[@]}"
+
+      # Numbers only: metrics.json (aggregate metrics, tokens, cost, gate result) and the label x band counts.
+      # predictions.csv (per-case scores) is deliberately not uploaded.
+      - name: Upload metrics
+        if: always() && env.HAS_SECRETS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-metrics
+          path: |
+            eval/out/runs/*/metrics.json
+            eval/out/runs/*/info.json
+            eval/out/runs/*/confusion.csv
+          retention-days: 30
+          if-no-files-found: ignore
