@@ -96,3 +96,80 @@ def test_main_run_calls_shadow_and_respects_no_ml(demo_store, monkeypatch):
     main.run(demo_store, args, [], DEMO_PROFILE)
     main.run(demo_store, NS(**{**vars(args), "no_ml": True}), [], DEMO_PROFILE)
     assert calls == [1]
+
+
+def _write_eval_set(tmp_path, cases, labels):
+    import csv
+    import json
+    jobs = tmp_path / "jobs.jsonl"
+    jobs.write_text("".join(json.dumps(c) + "\n" for c in cases), encoding="utf-8")
+    lab = tmp_path / "labels.csv"
+    with open(lab, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["case_id", "label", "note"])
+        w.writerows([[cid, label, ""] for cid, label in labels.items()])
+    return jobs, lab
+
+
+def _synthetic_cases(n_fit=12, n_no=12):
+    cases, labels = [], {}
+    for i in range(n_fit + n_no):
+        fit = i < n_fit
+        cid = f"case{i}"
+        cases.append({"case_id": cid, "company": f"Eval Co {i % 6}", "title": "Data Engineer" if fit else "Sales Rep",
+                      "location": "tel aviv", "department": "", "url": f"https://example.com/eval/{i}",
+                      "description": "SQL, Python, dbt, Airflow. 3+ years." if fit else "CRM, quotas, travel."})
+        labels[cid] = "fit" if fit else "no_fit"
+    return cases, labels
+
+
+def test_eval_set_makes_training_possible(demo_store, tmp_path, monkeypatch, caplog):
+    s = demo_store
+    s.conn.execute("DELETE FROM job_feedback")
+    s.conn.execute("UPDATE jobs SET score = NULL")             # the DB alone has no positive label
+    assert shadow_score(s, DEMO_CV, DEMO_PROFILE) is None
+
+    jobs, labels = _write_eval_set(tmp_path, *_synthetic_cases())
+    monkeypatch.setenv("EVAL_JOBS_JSONL", str(jobs))
+    monkeypatch.setenv("EVAL_LABELS_CSV", str(labels))
+    caplog.clear()
+    out = shadow_score(s, DEMO_CV, DEMO_PROFILE)
+    assert out and out["n_eval_cases"] == 24 and out["n_positives"] >= 12 and out["n_scored"] > 0
+    assert "Data Engineer" not in caplog.text and "CRM" not in caplog.text   # counts only, never rows
+
+
+def test_eval_case_that_is_a_db_job_counts_once(demo_store, tmp_path, monkeypatch):
+    from jobagent.ml import train as T
+    s = demo_store
+    db_job = s.conn.execute("SELECT job_id, url, title, company, location, description FROM jobs "
+                            "WHERE score IS NOT NULL LIMIT 1").fetchone()
+    cases, labels = _synthetic_cases(2, 2)
+    cases.append({"case_id": "dup", "company": db_job[3], "title": db_job[2], "location": db_job[4],
+                  "department": "", "url": db_job[1], "description": db_job[5]})
+    labels["dup"] = "maybe"
+    jobs, lab = _write_eval_set(tmp_path, cases, labels)
+    monkeypatch.setenv("EVAL_JOBS_JSONL", str(jobs))
+    monkeypatch.setenv("EVAL_LABELS_CSV", str(lab))
+    from jobagent.ml.shadow import load_eval_set
+    c, l = load_eval_set()
+    fb = s.conn.execute("SELECT job_id, decision, source FROM job_feedback").df()
+    rows = T.labeled_rows(T.load_jobs(s), fb, DEMO_PROFILE, c, l, feedback_sources=("cli", "eval"))
+    mine = rows[rows["job_id"] == db_job[0]]
+    assert len(mine) == 1 and mine.iloc[0]["tier"] == "gold"     # the DB copy is not also a silver row
+    assert not rows["gid"].duplicated().any()
+
+
+def test_missing_eval_files_are_ignored(monkeypatch, tmp_path):
+    from jobagent.ml.shadow import load_eval_set
+    monkeypatch.setenv("EVAL_JOBS_JSONL", str(tmp_path / "nope.jsonl"))
+    monkeypatch.setenv("EVAL_LABELS_CSV", str(tmp_path / "nope.csv"))
+    assert load_eval_set() == ([], {})
+
+
+def test_workflow_keeps_eval_set_out_of_data_and_logs():
+    from pathlib import Path
+    wf = (Path(__file__).resolve().parent.parent / ".github" / "workflows" / "daily.yml").read_text()
+    step = wf[wf.index("Decrypt eval set for the relevance model"):wf.index("- name: Build image")]
+    assert "$RUNNER_TEMP/evalset" in step and "data/" not in step.replace("eval/dataset/", "")
+    assert "cat " not in step and "head " not in step
+    assert '/run/evalset:ro' in wf and 'rm -rf "$RUNNER_TEMP/feedback.csv" "$RUNNER_TEMP/evalset"' in wf
