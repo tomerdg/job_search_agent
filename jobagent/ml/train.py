@@ -95,8 +95,10 @@ def gold_from_eval(cases: list[dict], labels: dict[str, dict], jobs: pd.DataFram
     return df
 
 
-def gold_from_feedback(feedback: pd.DataFrame, jobs: pd.DataFrame) -> pd.DataFrame:
-    fb = feedback[feedback["source"].eq("cli")]
+def gold_from_feedback(feedback: pd.DataFrame, jobs: pd.DataFrame, sources=("cli",)) -> pd.DataFrame:
+    """Feedback rows as gold. Offline the eval set is read from its own files, so only 'cli' rows are used;
+    the daily run has no eval files and also uses the 'eval' rows that import-eval wrote."""
+    fb = feedback[feedback["source"].isin(sources)]
     df = jobs.merge(fb[["job_id", "decision"]], on="job_id")
     df["y"] = df["decision"].eq("applied").astype(int)
     df["is_fit"] = df["y"]
@@ -105,9 +107,9 @@ def gold_from_feedback(feedback: pd.DataFrame, jobs: pd.DataFrame) -> pd.DataFra
     return df
 
 
-def gold_rows(jobs, feedback, eval_cases=None, eval_labels=None) -> pd.DataFrame:
+def gold_rows(jobs, feedback, eval_cases=None, eval_labels=None, feedback_sources=("cli",)) -> pd.DataFrame:
     gold = pd.concat([gold_from_eval(eval_cases or [], eval_labels or {}, jobs),
-                      gold_from_feedback(feedback, jobs)], ignore_index=True)
+                      gold_from_feedback(feedback, jobs, feedback_sources)], ignore_index=True)
     if gold.empty:
         return gold
     # Eval and feedback can name the same job: keep the owner's later word (feedback, concatenated last).
@@ -134,10 +136,10 @@ def training_rows(jobs: pd.DataFrame, gold: pd.DataFrame, profile: dict,
 
 
 def labeled_rows(jobs: pd.DataFrame, feedback: pd.DataFrame, profile: dict, eval_cases=None,
-                 eval_labels=None) -> pd.DataFrame:
+                 eval_labels=None, feedback_sources=("cli",)) -> pd.DataFrame:
     """All labels in one frame: gold, then silver and weak negatives that are not gold.
     Columns used later: tier, y, is_fit, gid (unique row id), group (company, the CV group)."""
-    gold = gold_rows(jobs, feedback, eval_cases, eval_labels)
+    gold = gold_rows(jobs, feedback, eval_cases, eval_labels, feedback_sources)
     gold = gold.assign(tier="gold") if len(gold) else gold
     proxy = training_rows(jobs, gold, profile)
     proxy = proxy.assign(is_fit=proxy["y"], gid=proxy["job_id"])

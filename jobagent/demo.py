@@ -8,6 +8,7 @@ Everything here is synthetic: company names, titles and scores are invented.
 from __future__ import annotations
 
 import argparse
+import math
 import random
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -63,6 +64,7 @@ def demo_score(rng: random.Random, title: str, description: str) -> int:
 
 def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
     rng = random.Random(seed)
+    ml_rng = random.Random(seed + 1)  # separate stream, so the rest of the demo data does not change
     Path(db).unlink(missing_ok=True)
     store = Store(db)
     end = datetime(2026, 11, 1, 8, 0)
@@ -94,6 +96,10 @@ def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
             store.mark_inactive({j.company for j in live}, {j.job_id for j in live}, ts=day)
             store.record_observations(run_id, [j.job_id for j in live], ts=day)
             store.record_sources(run_id, stats)
+            # Synthetic shadow-mode scores (what jobagent/ml/shadow.py writes): roughly follow the LLM-like score.
+            store.save_ml_scores({jid: 1 / (1 + math.exp(-(demo_score(ml_rng, open_jobs[jid][0].title,
+                                                                    open_jobs[jid][0].description) - 55) / 10))
+                                  for jid in new_ids}, "demo", ts=day)
             for jid in new_ids:
                 job = open_jobs[jid][0]
                 data_role = any(k in job.title for k in ("Data", "BI", "Analytics", "נתונים"))

@@ -132,10 +132,14 @@ that fires when a source returned nothing three runs in a row.
 ## Relevance model (offline)
 
 A cheap classifier that predicts whether a job is worth an LLM call, trained offline and compared with the
-keyword pre-filter and the LLM score. It is not in the daily run yet.
+keyword pre-filter and the LLM score. In the daily run it works in **shadow mode** (`jobagent/ml/shadow.py`):
+each run retrains the logistic-regression model from the labels in the DB (no model file is kept), scores every
+active job the LLM has not scored into `jobs.ml_score`, and only reorders the LLM queue. It never filters. With
+too few labels, a failed check or no ML packages, it logs a line and the run continues as before (`--no-ml` turns
+it off). `mart_ml_vs_llm` tracks agreement with the LLM per week, with a `warn` test when it drops.
 
 ```bash
-pip install -r requirements-ml.txt
+pip install -r requirements-ml-train.txt -r requirements-eval.txt
 python -m jobagent.ml.train --report      # local DB + eval set -> MLflow run + eval/out/relevance/
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```

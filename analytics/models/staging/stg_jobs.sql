@@ -22,6 +22,9 @@ select
     score is not null                              as is_scored,
     prompt_version                                 as scoring_prompt_version,
     model                                          as scoring_model,
+    ml_score,
+    ml_model_version,
+    ml_scored_at,
     notified_at,
     notified_at is not null                        as was_notified
 from source

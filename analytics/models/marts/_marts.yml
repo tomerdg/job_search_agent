@@ -60,3 +60,13 @@ models:
           - accepted_values:
               arguments:
                 values: [ok, degraded, down]
+
+  - name: mart_ml_vs_llm
+    description: >
+      Relevance model (shadow mode) vs the LLM score, per week of ML scoring: agreement on match / no match,
+      the model's recall of LLM matches, and the share of jobs it would filter. Thresholds are dbt vars.
+    columns:
+      - name: week_start
+        data_tests: [unique, not_null]
+      - name: n_ml_scored
+        data_tests: [not_null]
