@@ -144,12 +144,14 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
   required years parsed from the JD (English and Hebrew), pre-filter role/location, JD length, Hebrew share, and
   overlap between a generic list of data skills in the JD and in the CV (read at runtime, never stored).
   Text goes through TF-IDF (words + character n-grams); everything is stacked into one `scipy.sparse` matrix.
-- **Labels**: gold = your own labels (eval set + `--applied`/`--skipped`/`--irrelevant`), used only for
-  evaluation; training = LLM scores plus jobs with no role keyword as weak negatives. Gold jobs never reach training.
+- **Labels**: gold = your own labels (eval set + `--applied`/`--skipped`/`--irrelevant`); silver = LLM scores;
+  weak negatives = jobs with no role keyword. A job that is gold appears once, with its gold label.
 - **Models**: logistic regression on all features; shallow XGBoost on the 200 strongest terms (chi2).
-- **Evaluation**: ROC/PR AUC on gold with bootstrap CIs (`scipy.stats.bootstrap`), recall and share of jobs
-  filtered at the threshold that keeps 95% recall, paired bootstrap of the LR − XGBoost AUC difference, and a
-  Wilcoxon test on per-fold AUCs from repeated GroupKFold by company.
+- **Evaluation**: repeated GroupKFold by company over all labels (a company is never on both sides of a split).
+  Metrics are computed on gold rows only, from out-of-fold predictions: ROC/PR AUC with bootstrap CIs
+  (`scipy.stats.bootstrap`), and recall and share of jobs filtered at a 95%-recall threshold that is chosen
+  inside each training fold. LR vs XGBoost: paired bootstrap of the AUC difference and a Wilcoxon test on
+  per-fold AUCs. The final models are fit on all labels.
 - **Validation** (`jobagent/ml/validate.py`): feature columns, dtypes, NaN/inf, value ranges, minimum positives,
   leakage, and prediction sanity. It runs inside training and prediction and stops the run on failure.
 - **Tracking**: MLflow experiment `relevance-model` with params, dataset hash, git sha, metrics, a validation tag

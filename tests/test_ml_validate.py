@@ -67,6 +67,16 @@ def test_leakage():
             V.check_no_leakage(train, gold)
 
 
+def test_split_and_unique_rows():
+    a = _jobs(["a"], ["u/a"], ["Data Engineer"]).assign(group="acme")
+    b = _jobs(["b"], ["u/b"], ["BI Dev"]).assign(company="Other", group="other")
+    assert V.check_split(a, b).results["leakage.company_not_split"]
+    with pytest.raises(V.ValidationError, match="company_not_split"):
+        V.check_split(a, b.assign(group="acme"))
+    with pytest.raises(V.ValidationError, match="unique_rows"):
+        V.check_unique_rows(pd.DataFrame({"gid": ["x", "x"]}))
+
+
 def test_predictions():
     assert all(V.check_predictions([0.1, 0.9], ["a", "b"]).results.values())
     for p, ids, check in [([0.1], ["a", "b"], "one_per_job"),

@@ -33,24 +33,34 @@ def result(demo_frames):
     return T.run(jobs, fb, DEMO_CV, DEMO_PROFILE, cv_repeats=1, n_boot=50)
 
 
-def test_gold_never_in_training(demo_frames):
+def test_labeled_rows_one_row_per_job(demo_frames):
     jobs, fb = demo_frames
-    gold = T.gold_rows(jobs, fb)
-    train = T.training_rows(jobs, gold, DEMO_PROFILE)
-    assert len(gold) and len(train)
-    assert not set(train["job_id"]) & set(gold["job_id"])
-    assert not set(train["url"]) & set(gold["url"])
-    assert set(train["tier"]) == {"silver", "weak_negative"}
+    rows = T.labeled_rows(jobs, fb, DEMO_PROFILE)
+    assert set(rows["tier"]) == {"gold", "silver", "weak_negative"}
+    assert not rows["gid"].duplicated().any()
+    gold = rows[rows["tier"] == "gold"]
+    proxy = rows[rows["tier"] != "gold"]
+    assert not set(proxy["job_id"]) & set(gold["job_id"])          # a gold job is not also silver/weak
 
 
-def test_eval_gold_maps_by_url_and_removes_repost(demo_frames):
+def test_eval_gold_maps_by_url_and_replaces_silver(demo_frames):
     jobs, fb = demo_frames
     j = jobs.dropna(subset=["score"]).iloc[0]
     case = {"case_id": "c1", "company": j.company, "title": j.title, "location": j.location,
             "department": "", "url": j.url, "description": j.description}
-    gold = T.gold_rows(jobs, fb.iloc[:0], [case], {"c1": {"label": "maybe"}})
-    assert gold.loc[0, "job_id"] == j.job_id and gold.loc[0, "y"] == 1 and gold.loc[0, "is_fit"] == 0
-    assert j.job_id not in set(T.training_rows(jobs, gold, DEMO_PROFILE)["job_id"])
+    rows = T.labeled_rows(jobs, fb.iloc[:0], DEMO_PROFILE, [case], {"c1": {"label": "maybe"}})
+    mine = rows[rows["job_id"] == j.job_id]
+    assert len(mine) == 1 and mine.iloc[0]["tier"] == "gold" and mine.iloc[0]["y"] == 1
+    assert mine.iloc[0]["is_fit"] == 0 and mine.iloc[0]["case_id"] == "c1"
+
+
+def test_cv_never_splits_a_company(demo_frames):
+    jobs, fb = demo_frames
+    rows = T.labeled_rows(jobs, fb, DEMO_PROFILE)
+    for r in range(2):
+        for tr, te in T._splits(rows["group"], 5, r):
+            assert not set(rows["group"].iloc[tr]) & set(rows["group"].iloc[te])
+            V.check_split(rows.iloc[tr], rows.iloc[te])
 
 
 def test_run_end_to_end(result):
@@ -59,10 +69,13 @@ def test_run_end_to_end(result):
     for name in ("logreg", "xgboost"):
         assert 0.6 < m[f"{name}.roc_auc"] <= 1                       # learns the synthetic signal
         assert m[f"{name}.roc_auc_ci_low"] <= m[f"{name}.roc_auc"] <= m[f"{name}.roc_auc_ci_high"]
-        assert m[f"{name}.recall_at_r95"] >= 0.95
+        assert m[f"{name}.threshold_nested_at_r95"] is True        # chosen inside the training folds
         assert 0 <= m[f"{name}.filtered_share_at_r95"] <= 1
-    assert 0 <= m["logreg_vs_xgboost.auc_diff_p"] <= 1
+    assert 0 <= m["logreg_vs_xgboost.auc_diff_p"] <= 1 and m["cv_folds"] >= 1
+    assert m["llm_score.threshold_nested_at_r95"] is False                # baselines: chosen on gold, marked
+    assert m["n_gold"] + m["n_silver"] + m["n_weak_negative"] == m["n_labeled"]
     assert all(result["validation"].results.values())
+    assert result["validation"].results["leakage.company_not_split"]
     assert len(result["dataset_hash"]) == 40
 
 
@@ -78,8 +91,9 @@ def test_sparse_matrix(demo_frames):
 def test_refuses_to_train_on_too_few_positives(demo_frames):
     jobs, fb = demo_frames
     jobs = jobs.assign(score=jobs["score"].where(jobs["score"].isna(), 0))  # no silver positive left
+    few = pd.concat([fb[fb["decision"] == "applied"].head(3), fb[fb["decision"] != "applied"]])  # 3 gold positives
     with pytest.raises(V.ValidationError, match="min_positives"):
-        T.run(jobs, fb, DEMO_CV, DEMO_PROFILE, cv_repeats=1, n_boot=10)
+        T.run(jobs, few, DEMO_CV, DEMO_PROFILE, cv_repeats=1, n_boot=10)
 
 
 def test_threshold_for_recall():
