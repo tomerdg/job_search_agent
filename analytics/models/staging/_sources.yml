@@ -20,3 +20,10 @@ sources:
         description: Append-only. Which jobs were live on the careers site in which run.
       - name: source_runs
         description: Append-only. Per run and source, whether the fetch worked and how many jobs it returned.
+      - name: job_feedback
+        description: >
+          One row per job: the owner's latest decision (applied / skipped / irrelevant). The labels for the
+          relevance model. Personal, so it stays in the local/cached DB (synced via an encrypted file).
+        columns:
+          - name: job_id
+            data_tests: [unique, not_null]

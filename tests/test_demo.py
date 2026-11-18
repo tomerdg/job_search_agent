@@ -11,3 +11,12 @@ def test_demo_db_has_history(tmp_path):
     assert count("jobs") > 0 and count("job_observations") > count("jobs")
     assert s.conn.execute("SELECT count(*) FROM jobs WHERE NOT is_active").fetchone()[0] > 0
     s.close()
+
+
+def test_demo_db_has_feedback(tmp_path):
+    db = tmp_path / "demo.duckdb"
+    build(db, days=30)
+    s = Store(db)
+    decisions = {r["decision"] for r in s.feedback()}
+    s.close()
+    assert decisions == {"applied", "skipped", "irrelevant"}
