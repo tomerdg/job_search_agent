@@ -70,6 +70,12 @@ def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
                 store.set_prefilter(jid, data_role)
                 if data_role:
                     store.save_score(jid, rng.randint(40, 95), {"summary": "demo", "strengths": [], "gaps": []})
+                    # Synthetic owner decisions: some high scorers applied to, some skipped, a few irrelevant.
+                    pick = rng.random()
+                    if pick < 0.25:
+                        decision = rng.choice(["applied", "applied", "skipped", "irrelevant"])
+                        store.record_feedback([jid], decision, ts=day + timedelta(days=rng.randint(0, 3)),
+                                              source=rng.choice(["cli", "cli", "eval"]))
             store.finish_run(run_id, len(live), len(new_ids), ts=day)
             open_jobs = {k: v for k, v in open_jobs.items() if v[1] > day}
         day += timedelta(days=1)

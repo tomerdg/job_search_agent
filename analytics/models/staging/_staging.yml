@@ -59,3 +59,30 @@ models:
     columns:
       - name: n_jobs
         data_tests: [not_null]
+
+  - name: stg_job_feedback
+    description: The owner's decision per job, the label for the relevance model. Grain = one job.
+    columns:
+      - name: job_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_jobs')
+                field: job_id
+              config:
+                severity: warn  # feedback can arrive (via the synced file) for a job this DB never saw
+      - name: decision
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [applied, skipped, irrelevant]
+      - name: feedback_source
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [cli, eval]
+      - name: decided_at
+        data_tests: [not_null]

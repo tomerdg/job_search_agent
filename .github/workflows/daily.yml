@@ -8,6 +8,8 @@ name: daily-job-search
 #   download    -> after each run, jobs.duckdb + warehouse.duckdb are uploaded as the artifact
 #                  "job-db", encrypted with the same passphrase. The repo is public and any signed-in
 #                  GitHub user can download its artifacts, so they are never uploaded unencrypted.
+#   feedback    -> data/feedback.csv.enc (committed, encrypted with DB_PASSPHRASE): decrypted to
+#                  $RUNNER_TEMP and mounted read-only into the container, then deleted.
 #   dbt marts   -> only pass/warn counts reach the log, never rows.
 
 on:
@@ -112,6 +114,14 @@ jobs:
           key: jobs-db-${{ github.run_id }}
           restore-keys: jobs-db-
 
+      # The owner's applied/skipped decisions, committed encrypted (see jobagent/feedback.py). Decrypted
+      # outside the repo folder, so it is never in data/ (cached, uploaded) and never printed.
+      - name: Decrypt feedback.csv
+        if: env.HAS_DB_KEY == 'true' && hashFiles('data/feedback.csv.enc') != ''
+        env:
+          DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
+        run: scripts/dbcrypt.sh decrypt data/feedback.csv.enc "$RUNNER_TEMP/feedback.csv"
+
       - name: Build image
         run: docker build -t job-search-agent .
 
@@ -128,12 +138,18 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           mkdir -p data
+          feedback=()
+          if [ -f "$RUNNER_TEMP/feedback.csv" ]; then
+            trap 'rm -f "$RUNNER_TEMP/feedback.csv"' EXIT
+            feedback=(-v "$RUNNER_TEMP/feedback.csv:/run/feedback.csv:ro" -e FEEDBACK_CSV=/run/feedback.csv)
+          fi
           docker run --rm \
             -e ANTHROPIC_API_KEY -e PROFILE_YAML -e CV_TEXT \
             -e TELEGRAM_BOT_TOKEN -e TELEGRAM_CHAT_ID \
             -e SMTP_HOST -e SMTP_USER -e SMTP_PASSWORD -e EMAIL_TO \
             -e JOBS_DB=/app/data/jobs.duckdb \
             -v "$PWD/data:/app/data" \
+            "${feedback[@]}" \
             job-search-agent
 
       - name: Encrypt and save jobs.duckdb

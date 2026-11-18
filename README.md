@@ -107,12 +107,14 @@ CI runs exactly this on every change.
 | `jobs` | one job | current state: first/last seen, open or closed, pre-filter result, score, sent |
 | `runs` | one pipeline run | run time, jobs fetched, new jobs |
 | `job_observations` | job × run, append-only | which jobs were live in each run, for open-duration history |
+| `job_feedback` | one job | your latest decision (applied / skipped / irrelevant): labels for the relevance model |
 | `source_runs` | source × run, append-only | fetch ok?, jobs returned, duration: source health over time |
 
 **dbt models** (`analytics/models`)
 
 ```
-staging       stg_jobs, stg_runs, stg_job_observations, stg_source_runs       views: rename, cast, clean
+staging       stg_jobs, stg_runs, stg_job_observations, stg_source_runs,      views: rename, cast, clean
+              stg_job_feedback
 intermediate  int_job_roles (title → role family, EN + HE), int_job_activity  views
 marts         fct_job_postings      one row per job: opened, closed, days open (censoring flagged), role, match band
               dim_companies         company, sector, source, postings
@@ -162,6 +164,29 @@ docker run --rm -e ANTHROPIC_API_KEY -v "$PWD/data:/app/data" -v "$PWD:/repo:ro"
 
 Jobs already handled by hand can be skipped in future digests with `--mark-seen` / `--mark-printed`.
 
+### Record what you did with a job (labels)
+
+Each decision is a label for a future relevance model, and the job is never sent again:
+
+```bash
+python -m jobagent.main --applied 3f2a9c1e            # ids as shown in the digest (8 chars is enough)
+python -m jobagent.main --skipped 7b01d4aa 9c3e55f0 --note "why, kept local only"
+python -m jobagent.main --irrelevant 0d9e2b7c
+```
+
+The latest decision per job wins. Ids are resolved against the local `data/jobs.duckdb`, so download the
+latest `job-db` first (see below), or pass the full 16-character id. The scheduled run has its own DB, so
+decisions reach it through one encrypted file:
+
+```bash
+python -m jobagent.feedback export   # -> data/feedback.csv (git-ignored) -> data/feedback.csv.enc
+git add data/feedback.csv.enc && git commit -m "Update feedback"
+```
+
+The file holds only job id, decision, time and source (no titles, companies or notes). The next run decrypts
+it with `DB_PASSPHRASE` and merges it (newer decision wins). `python -m jobagent.feedback import-eval` seeds
+labels once from the local evaluation set and prints counts only.
+
 ### GitHub Actions secrets
 
 | Secret | Needed | What |
@@ -183,6 +208,7 @@ Run it by hand from the Actions tab (`daily-job-search` → Run workflow). The m
 | CV | path in `config/profile.yaml` or `CV_PATH` | secret `CV_TEXT` |
 | Preferences (roles, keywords, locations) | `config/profile.yaml` | secret `PROFILE_YAML` |
 | Job history + scores | `data/jobs.duckdb` | Actions cache, encrypted with `DB_PASSPHRASE`, never committed |
+| Your applied/skipped decisions | `data/jobs.duckdb`, `data/feedback.csv` | `data/feedback.csv.enc`, committed encrypted; decrypted to the runner's temp dir, never into `data/` |
 | dbt marts | `data/warehouse.duckdb` | built on the runner; the log shows only test counts |
 | Downloadable copy of both | | artifact `job-db` on each run, encrypted with `DB_PASSPHRASE`, kept 30 days |
 | Digest | printed with `--no-notify` | Telegram / email only |

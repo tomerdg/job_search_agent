@@ -5,6 +5,8 @@ Tables (the raw layer that the dbt project in analytics/ builds on):
   runs              one row per agent run
   job_observations  append-only: which jobs were live in which run (open-duration history)
   source_runs       append-only: per run and source, did the fetch work and how many jobs came back
+  job_feedback      one row per job: the owner's latest decision (applied / skipped / irrelevant),
+                    the labels for the relevance model
 """
 from __future__ import annotations
 
@@ -76,10 +78,20 @@ CREATE TABLE IF NOT EXISTS source_runs (
     error        VARCHAR,
     PRIMARY KEY (run_id, company, source_type)
 );
+CREATE TABLE IF NOT EXISTS job_feedback (
+    job_id       VARCHAR NOT NULL,
+    decision     VARCHAR NOT NULL CHECK (decision IN ('applied', 'skipped', 'irrelevant')),
+    decided_at   TIMESTAMP NOT NULL,
+    source       VARCHAR NOT NULL DEFAULT 'cli',  -- cli | sync (feedback.csv) | eval (bootstrap)
+    note         VARCHAR,                         -- free text, local only: never exported
+    PRIMARY KEY (job_id)
+);
 -- Added later; ADD COLUMN IF NOT EXISTS migrates databases created before.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS prompt_version VARCHAR;  -- prompt that produced score
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model VARCHAR;           -- model that produced score
 """
+
+DECISIONS = ("applied", "skipped", "irrelevant")
 
 JOB_COLS = ["job_id", "source", "company", "sector", "external_id", "title", "location",
             "department", "url", "description", "posted_at"]
@@ -268,6 +280,53 @@ class Store:
                                      (p.strip(),)).fetchall()
             out.extend(r[0] for r in rows)
         return out
+
+    # ---- feedback (labels) ----
+    def record_feedback(self, job_ids: list[str], decision: str, note: str | None = None,
+                        source: str = "cli", ts: datetime | None = None) -> int:
+        """Record the owner's decision on jobs. The latest call wins. The jobs also count as sent,
+        so a decided job is never put in a digest again. Returns the number of jobs recorded."""
+        ts = ts or now()
+        rows = [{"job_id": i, "decision": decision, "decided_at": ts, "source": source, "note": note}
+                for i in dict.fromkeys(job_ids)]
+        return self.upsert_feedback(rows, when="always")
+
+    def upsert_feedback(self, rows: list[dict], when: str = "newer") -> int:
+        """Write feedback rows (job_id, decision, decided_at, source, note).
+        when: 'always' overwrites, 'newer' overwrites only an older decided_at, 'missing' never overwrites.
+        Returns the number of rows inserted or changed."""
+        bad = {r["decision"] for r in rows} - set(DECISIONS)
+        if bad:
+            raise ValueError(f"decision must be one of {', '.join(DECISIONS)}, got {', '.join(sorted(bad))}")
+        conflict = {
+            "always": "DO UPDATE SET decision=excluded.decision, decided_at=excluded.decided_at,"
+                      " source=excluded.source, note=excluded.note",
+            "newer": "DO UPDATE SET decision=excluded.decision, decided_at=excluded.decided_at,"
+                     " source=excluded.source, note=coalesce(excluded.note, job_feedback.note)"
+                     " WHERE excluded.decided_at > job_feedback.decided_at",
+            "missing": "DO NOTHING",
+        }[when]
+        changed = 0
+        self.conn.execute("BEGIN")
+        try:
+            for r in rows:
+                cur = self.conn.execute(
+                    "INSERT INTO job_feedback (job_id, decision, decided_at, source, note)"
+                    f" VALUES (?, ?, ?, ?, ?) ON CONFLICT (job_id) {conflict} RETURNING job_id",
+                    (r["job_id"], r["decision"], r["decided_at"], r.get("source") or "cli", r.get("note")),
+                )
+                changed += len(cur.fetchall())
+            if rows:  # decided jobs are never sent again
+                self.conn.executemany("UPDATE jobs SET notified_at=? WHERE job_id=? AND notified_at IS NULL",
+                                      [(r["decided_at"], r["job_id"]) for r in rows])
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
+        return changed
+
+    def feedback(self) -> list[dict]:
+        return self._all("SELECT job_id, decision, decided_at, source, note FROM job_feedback ORDER BY job_id")
 
     def mark_notified(self, job_ids: list[str]) -> None:
         ts = now()

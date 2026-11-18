@@ -40,9 +40,19 @@ def main(argv=None) -> None:
     ap.add_argument("--no-notify", action="store_true", help="print the digest instead of sending it")
     ap.add_argument("--mark-seen", nargs="+", metavar="ID",
                     help="mark jobs as seen (ids from the digest) so they are never sent again, then exit")
+    for decision in ("applied", "skipped", "irrelevant"):
+        ap.add_argument(f"--{decision}", nargs="+", metavar="ID",
+                        help=f"record that you {decision if decision != 'irrelevant' else 'found irrelevant'}"
+                             " these jobs (ids from the digest), then exit")
+    ap.add_argument("--note", help="with --applied/--skipped/--irrelevant: a private note (never exported)")
     ap.add_argument("--mark-printed", action="store_true",
                     help="with --no-notify: mark the printed jobs as seen")
     args = ap.parse_args(argv)
+    chosen = [d for d in ("applied", "skipped", "irrelevant") if getattr(args, d)]
+    if len(chosen) > 1:
+        ap.error("use only one of --applied / --skipped / --irrelevant at a time")
+    if args.note and not chosen:
+        ap.error("--note needs --applied, --skipped or --irrelevant")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     sources = yaml.safe_load(open(args.sources, encoding="utf-8"))["sources"]
@@ -60,12 +70,40 @@ def main(argv=None) -> None:
         store.close()
 
 
+def resolve_for_feedback(store, prefixes: list[str]) -> list[str]:
+    """Like resolve_ids, but strict: a short id must match exactly one job. A full 16-char id
+    that is not in this DB (e.g. a digest from the scheduled run) is kept as is."""
+    out = []
+    for p in prefixes:
+        p = p.strip()
+        matches = store.resolve_ids([p])
+        if len(matches) == 1:
+            out.append(matches[0])
+        elif len(matches) > 1:
+            log.warning("%s matches %d jobs; use more characters. Skipped.", p, len(matches))
+        elif len(p) == 16 and all(c in "0123456789abcdef" for c in p):
+            log.warning("%s is not in this DB; recorded anyway (full id)", p)
+            out.append(p)
+        else:
+            log.warning("%s matches no job in this DB. Skipped.", p)
+    return out
+
+
 def run(store, args, sources: list[dict], profile: dict) -> None:
     if args.mark_seen:
         ids = store.resolve_ids(args.mark_seen)
         store.mark_notified(ids)
         print(f"Marked {len(ids)} job(s) as seen")
         return
+    for decision in ("applied", "skipped", "irrelevant"):
+        if getattr(args, decision, None):
+            ids = resolve_for_feedback(store, getattr(args, decision))
+            n = store.record_feedback(ids, decision, note=args.note) if ids else 0
+            print(f"Recorded {n} job(s) as {decision}")
+            return
+
+    from jobagent.feedback import sync_at_start
+    sync_at_start(store)
 
     run_id = store.start_run()
     source_stats: list[dict] = []
