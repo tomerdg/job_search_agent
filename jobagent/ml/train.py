@@ -6,22 +6,28 @@
 
 Labels, binary target `fit_or_maybe`:
     gold    the owner's own judgement: eval-set labels (fit/maybe -> 1, no_fit -> 0) and job_feedback rows
-            with source='cli' (applied -> 1, skipped/irrelevant -> 0). Used ONLY for evaluation.
+            with source='cli' (applied -> 1, skipped/irrelevant -> 0).
     silver  the LLM score on scored jobs (score >= MIN_SCORE -> 1).
     weak    jobs whose title/description miss every pre-filter keyword -> 0 (location misses are not used:
             a job in the wrong city can still be a good role).
-Training uses silver + weak, minus every job that is also gold (same job id, url, or company + title);
-validate.check_no_leakage enforces it.
+A DB job that is also gold (same job id, or company + title) appears once, with its gold label.
+
+Evaluation is cross-validated: repeated GroupKFold by company over all labels, so a company is never in both
+the training and the test part of a split (validate.check_split enforces it, per split). Every reported
+metric is computed on gold rows only, from their out-of-fold predictions (averaged over repeats).
+The 95%-recall threshold is chosen inside each training part (inner GroupKFold, gold rows of the training
+part) and applied to the test part, so recall and filtered share are not tuned on the jobs they are measured
+on. The final models are fit on all labels.
 
 Models, both on one scipy.sparse matrix (dense features one-hot/scaled + TF-IDF):
     logreg   logistic regression, class_weight=balanced, all TF-IDF terms (words + char n-grams for Hebrew)
     xgboost  shallow gradient boosting (max_depth 3) on the 200 TF-IDF terms with the highest chi2
-Baselines on gold: the keyword pre-filter and the LLM score.
+Baselines on gold: the keyword pre-filter and the LLM score (no training, so their thresholds are chosen on
+gold itself and marked as such).
 
-Metrics on gold: ROC AUC and PR AUC with bootstrap 95% CIs (scipy.stats.bootstrap), and at the threshold that
-keeps recall >= 0.95: recall of fit, share of jobs filtered out (= LLM calls saved). That threshold is chosen
-on gold itself, so it is optimistic. LR vs XGBoost: paired bootstrap of the AUC difference on the same gold
-jobs, and a Wilcoxon signed-rank test on per-fold AUCs from repeated GroupKFold by company on training rows.
+Metrics on gold: ROC AUC and PR AUC with bootstrap 95% CIs (scipy.stats.bootstrap), recall, recall of fit and
+share of jobs filtered (= LLM calls saved) at the nested threshold. LR vs XGBoost: paired bootstrap of the AUC
+difference on the same out-of-fold predictions, and a Wilcoxon signed-rank test on per-fold gold AUCs.
 
 Outputs: metrics.json (aggregates only) and an optional markdown report under eval/out/ (git-ignored),
 an MLflow run in experiment "relevance-model". In CI only aggregates are logged: no model, no feature
@@ -74,15 +80,17 @@ def _key(company: pd.Series, title: pd.Series) -> pd.Series:
 
 
 def gold_from_eval(cases: list[dict], labels: dict[str, dict], jobs: pd.DataFrame) -> pd.DataFrame:
-    """Eval cases as rows with their own text. source and job_id come from the matching DB job (by url)."""
+    """Eval cases as rows with their own text. source and job_id come from the matching DB job
+    (jobagent.feedback.match_cases: url, plus title when the url is shared)."""
     df = pd.DataFrame(cases)
     if df.empty:
         return df
     df["label"] = df["case_id"].map(lambda c: (labels.get(c) or {}).get("label", ""))
     df = df[df["label"].isin(["fit", "maybe", "no_fit"])].copy()
-    by_url = jobs.dropna(subset=["url"]).drop_duplicates("url").set_index("url")
-    df["source"] = df["url"].map(by_url["source"]).fillna("unknown")
-    df["job_id"] = df["url"].map(by_url["job_id"])
+    from jobagent.feedback import match_cases  # url alone only when no other DB job shares it
+    matches = match_cases(df.to_dict("records"), list(jobs[["job_id", "url", "title"]].itertuples(index=False)))
+    df["job_id"] = df["case_id"].map(lambda c: (matches.get(c) or [None])[0])
+    df["source"] = df["job_id"].map(jobs.drop_duplicates("job_id").set_index("job_id")["source"]).fillna("unknown")
     df["y"] = df["label"].isin(["fit", "maybe"]).astype(int)
     df["is_fit"] = df["label"].eq("fit").astype(int)
     df["origin"] = "eval"
@@ -122,9 +130,26 @@ def training_rows(jobs: pd.DataFrame, gold: pd.DataFrame, profile: dict,
 
     in_gold = np.zeros(len(df), bool)
     if not gold.empty:
-        in_gold = (df["job_id"].isin(gold["job_id"].dropna()) | df["url"].isin(gold["url"].dropna())
+        # Not by url alone: a url shared by many jobs (one careers page for all) would drop unrelated jobs.
+        in_gold = (df["job_id"].isin(gold["job_id"].dropna())
                    | _key(df["company"], df["title"]).isin(_key(gold["company"], gold["title"]))).to_numpy()
     return df[(df["tier"] != "") & ~in_gold].reset_index(drop=True)
+
+
+def labeled_rows(jobs: pd.DataFrame, feedback: pd.DataFrame, profile: dict, eval_cases=None,
+                 eval_labels=None) -> pd.DataFrame:
+    """All labels in one frame: gold, then silver and weak negatives that are not gold.
+    Columns used later: tier, y, is_fit, gid (unique row id), group (company, the CV group)."""
+    gold = gold_rows(jobs, feedback, eval_cases, eval_labels)
+    gold = gold.assign(tier="gold") if len(gold) else gold
+    proxy = training_rows(jobs, gold, profile)
+    proxy = proxy.assign(is_fit=proxy["y"], gid=proxy["job_id"])
+    cols = ["gid", "job_id", "url", "company", "title", "location", "department", "description", "source",
+            "score", "tier", "y", "is_fit", "case_id"]
+    parts = [df.reindex(columns=cols) for df in (gold, proxy) if len(df)]
+    df = pd.concat(parts, ignore_index=True)
+    df["group"] = df["company"].fillna("").astype(str).str.lower().str.split().str.join(" ")
+    return df
 
 
 # ---------------------------------------------------------------- feature matrix
@@ -171,16 +196,21 @@ class SparseFeatures(BaseEstimator, TransformerMixin):
         return np.concatenate([self.onehot_.get_feature_names_out(CATEGORICAL), NUMERIC, terms])
 
 
+def make_logreg() -> Pipeline:
+    return Pipeline([("features", SparseFeatures(scale=True)),
+                     ("clf", LogisticRegression(class_weight="balanced", C=1.0, max_iter=2000))])
+
+
+def make_xgboost(seed: int = 0) -> Pipeline:
+    from xgboost import XGBClassifier  # training-only dependency, imported when used
+    return Pipeline([("features", SparseFeatures(scale=False, k_best=200)),
+                     ("clf", XGBClassifier(max_depth=3, n_estimators=200, learning_rate=0.05, subsample=0.9,
+                                           colsample_bytree=0.8, eval_metric="logloss", random_state=seed,
+                                           n_jobs=2))])
+
+
 def make_models(seed: int = 0) -> dict[str, Pipeline]:
-    from xgboost import XGBClassifier
-    return {
-        "logreg": Pipeline([("features", SparseFeatures(scale=True)),
-                            ("clf", LogisticRegression(class_weight="balanced", C=1.0, max_iter=2000))]),
-        "xgboost": Pipeline([("features", SparseFeatures(scale=False, k_best=200)),
-                             ("clf", XGBClassifier(max_depth=3, n_estimators=200, learning_rate=0.05,
-                                                   subsample=0.9, colsample_bytree=0.8, eval_metric="logloss",
-                                                   random_state=seed, n_jobs=2))]),
-    }
+    return {"logreg": make_logreg(), "xgboost": make_xgboost(seed)}
 
 
 def _fit(model: Pipeline, X: pd.DataFrame, y: np.ndarray) -> Pipeline:
@@ -275,101 +305,168 @@ def evaluate_scores(gold: pd.DataFrame, scores, n_boot: int = 1000, seed: int = 
     return out
 
 
-def group_cv(models: dict[str, Pipeline], X: pd.DataFrame, y: np.ndarray, groups: pd.Series,
-             n_splits: int = 5, repeats: int = 3, seed: int = 0) -> pd.DataFrame:
-    """Repeated GroupKFold by company on the training rows. Both models see the same folds, so their per-fold
-    AUCs are paired. Returns one row per usable fold, one column per model."""
+def _splits(groups: pd.Series, n_splits: int, seed: int):
     n_splits = min(n_splits, groups.nunique())
-    rows = []
+    return GroupKFold(n_splits=n_splits, shuffle=True, random_state=seed).split(groups, groups=groups)
+
+
+def nested_threshold(model: Pipeline, X: pd.DataFrame, rows: pd.DataFrame, n_splits: int = 3,
+                     seed: int = 0) -> float:
+    """The 95%-recall threshold, chosen only from a training part: inner GroupKFold out-of-fold scores of
+    its gold rows (all its rows when it has fewer than 5 gold positives)."""
+    y = rows["y"].to_numpy()
+    oof = np.full(len(rows), np.nan)
+    for tr, te in _splits(rows["group"], n_splits, seed):
+        if len(np.unique(y[tr])) == 2:
+            oof[te] = _fit(model, X.iloc[tr], y[tr]).predict_proba(X.iloc[te])[:, 1]
+    use = np.isfinite(oof)
+    gold = (rows["tier"] == "gold").to_numpy()
+    if (y[use & gold] == 1).sum() >= 5:
+        use &= gold
+    return threshold_for_recall(oof[use], y[use])
+
+
+def cross_validate(models: dict[str, Pipeline], X: pd.DataFrame, rows: pd.DataFrame, v: V.Validation,
+                   n_splits: int = 5, repeats: int = 3, seed: int = 0) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Repeated GroupKFold by company over all labels.
+    Returns: out-of-fold scores of gold rows (mean over repeats, one column per model); per-fold gold AUCs
+    (paired across models); and pooled at-threshold counts per model using each fold's nested threshold."""
+    y = rows["y"].to_numpy()
+    gold = (rows["tier"] == "gold").to_numpy()
+    oof = {name: np.zeros(len(rows)) for name in models}
+    hits = {name: np.zeros(len(rows)) for name in models}         # how often a row was kept (>= threshold)
+    seen = np.zeros(len(rows))
+    folds = []
     for r in range(repeats):
-        for tr, te in GroupKFold(n_splits=n_splits, shuffle=True, random_state=seed + r).split(X, y, groups):
-            if len(np.unique(y[tr])) < 2 or len(np.unique(y[te])) < 2:
+        for k, (tr, te) in enumerate(_splits(rows["group"], n_splits, seed + r)):
+            V.check_split(rows.iloc[tr], rows.iloc[te], v)
+            if len(np.unique(y[tr])) < 2:
                 continue
-            rows.append({name: roc_auc_score(y[te], _fit(m, X.iloc[tr], y[tr]).predict_proba(X.iloc[te])[:, 1])
-                         for name, m in models.items()})
-    return pd.DataFrame(rows, columns=list(models))
+            fold = {}
+            for name, m in models.items():
+                fitted = _fit(m, X.iloc[tr], y[tr])
+                p = fitted.predict_proba(X.iloc[te])[:, 1]
+                V.check_predictions(p, rows["gid"].iloc[te], v, name="cv_predictions")
+                t = nested_threshold(m, X.iloc[tr], rows.iloc[tr], seed=seed + r)
+                oof[name][te] += p
+                hits[name][te] += p >= t
+                g = gold[te]
+                fold[name] = _roc(y[te][g], p[g]) if g.any() else np.nan
+            seen[te] += 1
+            folds.append(fold)
+    ok = gold & (seen > 0)
+    scores = pd.DataFrame({name: oof[name][ok] / seen[ok] for name in models}, index=rows.index[ok])
+    kept = pd.DataFrame({name: hits[name][ok] / seen[ok] for name in models}, index=rows.index[ok])
+    return scores, pd.DataFrame(folds, columns=list(models)), kept
 
 
-def compare_cv(folds: pd.DataFrame) -> dict:
-    """Mean/std per model, and a Wilcoxon signed-rank test of logreg vs xgboost on the paired fold AUCs."""
-    out = {}
+def nested_at_threshold(gold: pd.DataFrame, kept: pd.Series) -> dict:
+    """Recall, recall of fit, precision and filtered share, where kept = share of repeats in which the
+    row scored above its fold's nested threshold (averaging over repeats)."""
+    y, f, k = gold["y"].to_numpy(bool), gold["is_fit"].to_numpy(bool), kept.to_numpy(float)
+    return {"threshold_nested": True,
+            "recall": float(k[y].mean()) if y.any() else float("nan"),
+            "recall_fit": float(k[f].mean()) if f.any() else float("nan"),
+            "precision": float((k * y).sum() / k.sum()) if k.sum() else float("nan"),
+            "filtered_share": float(1 - k.mean())}
+
+
+def evaluate_scores(gold: pd.DataFrame, scores, n_boot: int = 1000, seed: int = 0,
+                    kept: pd.Series | None = None) -> dict:
+    """AUCs with bootstrap CIs; at-threshold numbers from the nested `kept` shares when given, else at the
+    threshold chosen on these same scores (marked threshold_nested = False)."""
+    s = pd.Series(np.asarray(scores, float), index=gold.index)
+    ok = s.notna()
+    g, s = gold[ok], s[ok].to_numpy()
+    y = g["y"].to_numpy()
+    out = {"n_gold": int(len(g)), "n_pos": int(y.sum()), "roc_auc": _roc(y, s), "pr_auc": _pr(y, s)}
+    out["roc_auc_ci_low"], out["roc_auc_ci_high"] = bootstrap_ci(y, s, _roc, n_boot, seed)
+    out["pr_auc_ci_low"], out["pr_auc_ci_high"] = bootstrap_ci(y, s, _pr, n_boot, seed)
+    if kept is not None:
+        at = nested_at_threshold(g, kept[ok.to_numpy()])
+    else:
+        at = {"threshold_nested": False, **at_threshold(s, y, g["is_fit"], threshold_for_recall(s, y))}
+    out.update({f"{k}_at_r95": val for k, val in at.items()})
+    return out
+
+
+def compare_folds(folds: pd.DataFrame) -> dict:
+    """Mean/std of per-fold gold AUC per model, and a Wilcoxon signed-rank test of logreg vs xgboost on them
+    (same folds, so paired)."""
+    folds = folds.dropna()
+    out = {"cv_folds": int(len(folds))}
     for name in folds.columns:
-        out[f"{name}.cv_roc_auc_mean"] = float(folds[name].mean()) if len(folds) else float("nan")
-        out[f"{name}.cv_roc_auc_std"] = float(folds[name].std(ddof=1)) if len(folds) > 1 else float("nan")
-    out["cv_folds"] = int(len(folds))
+        out[f"{name}.fold_roc_auc_mean"] = float(folds[name].mean()) if len(folds) else float("nan")
+        out[f"{name}.fold_roc_auc_std"] = float(folds[name].std(ddof=1)) if len(folds) > 1 else float("nan")
     d = (folds["logreg"] - folds["xgboost"]).to_numpy() if len(folds) else np.array([])
     out["cv_wilcoxon_p"] = float(stats.wilcoxon(d).pvalue) if np.count_nonzero(d) >= 2 else float("nan")
     return out
 
 
-def dataset_hash(train: pd.DataFrame, gold: pd.DataFrame) -> str:
-    """SHA-1 of the sorted (job id, label) pairs of both sets: same data in, same hash."""
-    h = hashlib.sha1()
-    for df, col in ((train, "job_id"), (gold, "gid")):
-        if len(df):
-            pairs = df[[col, "y"]].astype(str).sort_values(col).to_numpy()
-            h.update("\n".join(map(",".join, pairs)).encode())
-        h.update(b"|")
-    return h.hexdigest()
+def dataset_hash(rows: pd.DataFrame) -> str:
+    """SHA-1 of the sorted (row id, tier, label) triples: same labels in, same hash."""
+    triples = rows[["gid", "tier", "y"]].astype(str).sort_values(["gid", "tier"]).to_numpy()
+    return hashlib.sha1("\n".join(map(",".join, triples)).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------- pipeline
 def run(jobs: pd.DataFrame, feedback: pd.DataFrame, cv_text: str, profile: dict,
         eval_cases: list[dict] | None = None, eval_labels: dict | None = None,
         llm_eval_scores: dict[str, float] | None = None, cv_repeats: int = 3, n_boot: int = 1000,
-        seed: int = 0, min_positives: int = V.MIN_POSITIVES, previous: dict | None = None) -> dict:
-    """Train both models and score them and the baselines on gold. Validation failures raise
-    V.ValidationError. Returns metrics (aggregates), the comparison table, validation results, and the
-    fitted models and gold predictions (those two stay local)."""
+        seed: int = 0, min_positives: int = V.MIN_POSITIVES, previous: dict | None = None,
+        n_splits: int = 5) -> dict:
+    """Cross-validate both models on all labels, report on gold rows, then fit the final models on all
+    labels. Validation failures raise V.ValidationError. Returns metrics (aggregates), the comparison table,
+    validation results, and the fitted models and gold predictions (those two stay local)."""
     v = V.Validation()
-    gold = gold_rows(jobs, feedback, eval_cases, eval_labels)
-    train = training_rows(jobs, gold, profile)
-    V.check_no_leakage(train, gold, v)
-
-    X, y = frame(train, cv_text, profile), train["y"].to_numpy()
+    rows = labeled_rows(jobs, feedback, profile, eval_cases, eval_labels)
+    V.check_unique_rows(rows, v)
+    X, y = frame(rows, cv_text, profile), rows["y"].to_numpy()
     V.check_features(X, v)
     V.check_labels(y, v, min_positives=min_positives, min_negatives=min_positives)
     V.class_drift(float(y.mean()), previous, v)
 
-    origin = gold["origin"] if len(gold) else pd.Series(dtype=str)
+    tier = rows["tier"]
+    gold = rows[tier == "gold"]
     metrics = {
-        "n_train": len(train), "n_silver": int((train["tier"] == "silver").sum()),
-        "n_silver_pos": int(((train["tier"] == "silver") & (train["y"] == 1)).sum()),
-        "n_weak_negative": int((train["tier"] == "weak_negative").sum()),
-        "n_gold": len(gold), "n_gold_eval": int((origin == "eval").sum()),
-        "n_gold_feedback": int((origin == "feedback").sum()),
-        "n_gold_pos": int(gold["y"].sum()) if len(gold) else 0,
+        "n_labeled": len(rows), "n_gold": int(len(gold)), "n_gold_pos": int(gold["y"].sum()),
+        "n_gold_eval": int(gold["case_id"].notna().sum()), "n_gold_feedback": int(gold["case_id"].isna().sum()),
+        "n_silver": int((tier == "silver").sum()), "n_silver_pos": int(((tier == "silver") & (rows["y"] == 1)).sum()),
+        "n_weak_negative": int((tier == "weak_negative").sum()), "n_companies": int(rows["group"].nunique()),
         "train_pos_rate": float(y.mean()),
     }
     models = make_models(seed)
-    fitted = {name: _fit(m, X, y) for name, m in models.items()}
-    folds = group_cv(models, X, y, train["company"], repeats=cv_repeats, seed=seed)
-    metrics.update(compare_cv(folds))
+    preds, folds, kept = cross_validate(models, X, rows, v, n_splits=n_splits, repeats=cv_repeats, seed=seed)
+    metrics.update(compare_folds(folds))
 
-    rows, preds = {}, pd.DataFrame(index=gold.index)
-    if len(gold) and gold["y"].nunique() == 2:
-        for name, m in fitted.items():
-            preds[name] = predict(m, gold, cv_text, profile, v)
+    table, gold_eval = pd.DataFrame(), gold.loc[preds.index]
+    if len(gold_eval) and gold_eval["y"].nunique() == 2:
+        out = {name: evaluate_scores(gold_eval, preds[name], n_boot, seed, kept[name]) for name in models}
         pf = PreFilter(profile)
         preds["prefilter"] = [float(pf(t, d or "", l or "")) for t, d, l
-                              in zip(gold["title"], gold["description"], gold["location"])]
-        llm = gold["case_id"].map(llm_eval_scores or {}) if "case_id" in gold else pd.Series(np.nan, gold.index)
-        llm = llm.astype(float).fillna(gold["job_id"].map(jobs.set_index("job_id")["score"]).astype(float))
+                              in zip(gold_eval["title"], gold_eval["description"], gold_eval["location"])]
+        llm = gold_eval["case_id"].map(llm_eval_scores or {}).astype(float)
+        db_score = jobs.drop_duplicates("job_id").set_index("job_id")["score"].astype(float)
+        llm = llm.fillna(gold_eval["job_id"].map(db_score))
         if llm.notna().any():
-            preds["llm_score"] = llm
-        rows = {name: evaluate_scores(gold, preds[name], n_boot, seed) for name in preds.columns}
-        paired = paired_auc_difference(gold["y"], preds["logreg"], preds["xgboost"], n_boot, seed)
+            preds["llm_score"] = llm.astype(float)
+        for name in ("prefilter", "llm_score"):
+            if name in preds:
+                out[name] = evaluate_scores(gold_eval, preds[name], n_boot, seed)
+        paired = paired_auc_difference(gold_eval["y"], preds["logreg"], preds["xgboost"], n_boot, seed)
         metrics.update({f"logreg_vs_xgboost.{k}": val for k, val in paired.items()})
+        for name, row in out.items():
+            metrics.update({f"{name}.{k}": val for k, val in row.items()})
+        table = pd.DataFrame.from_dict(out, orient="index")
+        for name in MODELS:
+            for k in ("fold_roc_auc_mean", "fold_roc_auc_std"):
+                table.loc[name, k] = metrics[f"{name}.{k}"]
     else:
-        log.warning("Gold set missing or one-class: no gold metrics (CV on training rows only)")
-    for name, row in rows.items():
-        metrics.update({f"{name}.{k}": val for k, val in row.items()})
-    table = pd.DataFrame.from_dict(rows, orient="index")
-    for name in MODELS:
-        for k in ("cv_roc_auc_mean", "cv_roc_auc_std"):
-            table.loc[name, k] = metrics[f"{name}.{k}"]
-    return {"metrics": metrics, "table": table, "validation": v, "models": fitted, "gold": gold,
-            "preds": preds, "dataset_hash": dataset_hash(train, gold),
+        log.warning("No gold rows with both classes: no gold metrics")
+
+    fitted = {name: _fit(m, X, y) for name, m in models.items()}           # final models: all labels
+    return {"metrics": metrics, "table": table, "validation": v, "models": fitted, "gold": gold_eval,
+            "preds": preds, "dataset_hash": dataset_hash(rows),
             "params": {f"{n}.{k}": val for n, m in models.items()
                        for k, val in m.named_steps["clf"].get_params().items()
                        if isinstance(val, (int, float, str, bool))}}
@@ -432,12 +529,14 @@ def pr_curve_plot(gold: pd.DataFrame, preds: pd.DataFrame, out: Path) -> Path:
 def report_markdown(result: dict, gate_lines: list[str]) -> str:
     m, t = result["metrics"], result["table"]
     counts = [k for k in m if k.startswith("n_") or k == "train_pos_rate"]
-    paired = [k for k in m if k.startswith(("logreg_vs_xgboost", "cv_"))]
+    paired = [k for k in m if k.startswith(("logreg_vs_xgboost", "cv_")) or ".fold_" in k]
     v = result["validation"]
     lines = ["# Relevance model report", "",
-             "Aggregates only. Gold = the owner's labels (evaluation only); train = LLM score + keyword negatives.",
+             "Aggregates only. Labels = the owner's (gold) + LLM score (silver) + keyword negatives. Metrics are "
+             "on gold rows only, from out-of-fold predictions of repeated GroupKFold by company.",
              "", "| | |", "|---|---|", *[f"| {k} | {m[k]:.3g} |" for k in counts], "",
-             f"Threshold per model = highest score that keeps recall (fit or maybe) >= {TARGET_RECALL} on gold. "
+             f"Threshold = highest score that keeps recall (fit or maybe) >= {TARGET_RECALL}; for the two models it is "
+             "chosen inside each training fold (`threshold_nested_at_r95` = 1), for the baselines on gold itself. "
              "`filtered_share_at_r95` = jobs below it = LLM calls saved. CIs: bootstrap 95%.", "",
              "```", t.round(3).T.to_string(), "```", "",
              "LR vs XGBoost:", "", *[f"- {k}: {m[k]:.3g}" for k in paired], "",

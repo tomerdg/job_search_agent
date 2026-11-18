@@ -67,6 +67,16 @@ def test_leakage():
             V.check_no_leakage(train, gold)
 
 
+def test_split_and_unique_rows():
+    a = _jobs(["a"], ["u/a"], ["Data Engineer"]).assign(group="acme")
+    b = _jobs(["b"], ["u/b"], ["BI Dev"]).assign(company="Other", group="other")
+    assert V.check_split(a, b).results["leakage.company_not_split"]
+    with pytest.raises(V.ValidationError, match="company_not_split"):
+        V.check_split(a, b.assign(group="acme"))
+    with pytest.raises(V.ValidationError, match="unique_rows"):
+        V.check_unique_rows(pd.DataFrame({"gid": ["x", "x"]}))
+
+
 def test_predictions():
     assert all(V.check_predictions([0.1, 0.9], ["a", "b"]).results.values())
     for p, ids, check in [([0.1], ["a", "b"], "one_per_job"),
@@ -83,3 +93,10 @@ def test_class_drift_warns_but_does_not_fail():
     assert v.results["labels.class_drift"] is False and v.warnings
     assert V.class_drift(0.12, {"train_pos_rate": 0.1}).results["labels.class_drift"]
     assert V.class_drift(0.5, None).results["labels.class_drift"]
+
+
+def test_shared_careers_url_is_not_leakage():
+    page = "https://example.com/careers"
+    train = _jobs(["a", "b"], [page, page], ["Data Engineer", "BI Dev"])
+    gold = _jobs(["c"], [page], ["Sales Rep"])
+    assert V.check_no_leakage(train, gold).results["leakage.gold_not_in_train"]

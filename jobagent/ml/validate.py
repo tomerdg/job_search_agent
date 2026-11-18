@@ -3,7 +3,9 @@ and fail loudly (ValidationError) instead of letting a bad matrix or a broken mo
 
     check_features(X)                    columns, dtypes, no NaN/inf, value ranges
     check_labels(y, min_positives, ...)  enough of each class to train
-    check_no_leakage(train, gold)        no gold job reaches the training set (by id, url, company+title)
+    check_unique_rows(rows)              one row per labelled job
+    check_split(train, test)             per CV split: no company and no job (id, url, company+title) on both sides
+    check_no_leakage(train, test)        no job on both sides (by id, url, company+title)
     check_predictions(p, ids)            one probability per job, in [0, 1], unique ids, not all the same
     class_drift(pos_rate, previous)      a warning, not an error: the positive rate moved a lot since last run
 
@@ -106,10 +108,17 @@ def check_labels(y, v: Validation | None = None, min_positives: int = MIN_POSITI
     return v
 
 
+def _single_job_urls(df: pd.DataFrame) -> set:
+    """Urls that name exactly one row. Some sites give every job the same careers-page url, so a shared
+    url is not evidence of the same job."""
+    counts = df["url"].dropna().value_counts()
+    return set(counts.index[counts == 1])
+
+
 def check_no_leakage(train: pd.DataFrame, gold: pd.DataFrame, v: Validation | None = None) -> Validation:
-    """No gold job in the training rows: same job_id, same url, or same normalised company + title."""
+    """No job on both sides: same job_id, same single-job url, or same normalised company + title."""
     v = v or Validation()
-    if gold.empty:
+    if gold.empty or train.empty:
         v.require("leakage.gold_not_in_train", True, "")
         return v
 
@@ -119,12 +128,27 @@ def check_no_leakage(train: pd.DataFrame, gold: pd.DataFrame, v: Validation | No
 
     hits = {
         "job_id": np.intersect1d(train["job_id"].dropna(), gold["job_id"].dropna()).size,
-        "url": np.intersect1d(train["url"].dropna(), gold["url"].dropna()).size,
+        "url": len(_single_job_urls(train) & _single_job_urls(gold)),
         "company_title": np.intersect1d(keys(train), keys(gold)).size,
     }
     v.require("leakage.gold_not_in_train", not any(hits.values()),
-              f"gold jobs found in training rows: {hits}")
+              f"the same jobs on both sides: {hits}")
     return v
+
+
+def check_unique_rows(rows: pd.DataFrame, v: Validation | None = None) -> Validation:
+    v = v or Validation()
+    dupes = int(rows["gid"].duplicated().sum())
+    v.require("labels.unique_rows", dupes == 0, f"{dupes} jobs appear more than once in the labels")
+    return v
+
+
+def check_split(train: pd.DataFrame, test: pd.DataFrame, v: Validation | None = None) -> Validation:
+    """One CV split: the two parts share no company (GroupKFold by company) and no job."""
+    v = v or Validation()
+    shared = np.intersect1d(train["group"].unique(), test["group"].unique()).size
+    v.require("leakage.company_not_split", shared == 0, f"{shared} companies on both sides of a split")
+    return check_no_leakage(train, test, v)
 
 
 def check_predictions(p, ids, v: Validation | None = None, name: str = "predictions") -> Validation:

@@ -108,13 +108,33 @@ def sync_at_start(store) -> None:
         log.info("Feedback: %d decision(s) imported", n)
 
 
+def _norm(text: str | None) -> str:
+    return " ".join((text or "").lower().split())
+
+
+def match_cases(cases: list[dict], jobs: list[tuple[str, str | None, str | None]]) -> dict[str, list[str]]:
+    """case_id -> matching DB job ids. jobs are (job_id, url, title) tuples.
+    A url matches on its own only when exactly one DB job has it: some sites give every job the same
+    careers-page url, so for a shared url the (normalised) title must match too."""
+    by_url: dict[str, list[tuple[str, str]]] = {}
+    for job_id, url, title in jobs:
+        if url:
+            by_url.setdefault(url.strip(), []).append((job_id, _norm(title)))
+    out = {}
+    for c in cases:
+        found = by_url.get((c.get("url") or "").strip(), [])
+        if len(found) > 1:
+            found = [f for f in found if f[1] == _norm(c.get("title"))]
+        out[c["case_id"]] = [job_id for job_id, _ in found]
+    return out
+
+
 def import_eval(store, jobs: list[dict], labels: dict[str, dict]) -> dict[str, int]:
-    """Bootstrap labels from the eval set: eval cases whose url matches a job in the DB.
+    """Bootstrap labels from the eval set: eval cases that match a job in the DB (see match_cases).
     fit/maybe -> applied, no_fit -> irrelevant, source='eval'. Never overwrites an existing decision.
     Returns counts only."""
-    by_url: dict[str, list[str]] = {}
-    for job_id, url in store.conn.execute("SELECT job_id, url FROM jobs WHERE url IS NOT NULL").fetchall():
-        by_url.setdefault(url.strip(), []).append(job_id)
+    db_jobs = store.conn.execute("SELECT job_id, url, title FROM jobs").fetchall()
+    matches = match_cases(jobs, db_jobs)
     from jobagent.db import now
     ts = now()
     rows, counts = [], {"cases": len(jobs), "matched": 0, "unlabeled": 0}
@@ -123,9 +143,8 @@ def import_eval(store, jobs: list[dict], labels: dict[str, dict]) -> dict[str, i
         if decision is None:
             counts["unlabeled"] += 1
             continue
-        ids = by_url.get((j.get("url") or "").strip(), [])
-        if ids:
-            counts["matched"] += 1
+        ids = matches.get(j["case_id"], [])
+        counts["matched"] += bool(ids)
         rows += [{"job_id": i, "decision": decision, "decided_at": ts, "source": "eval"} for i in ids]
     counts["recorded"] = store.upsert_feedback(rows, when="missing")
     return counts
@@ -154,7 +173,7 @@ def main(argv=None) -> int:
         else:
             from eval.dataset import load_jobs, load_labels
             c = import_eval(store, load_jobs(), load_labels())
-            print(f"{c['cases']} eval cases, {c['matched']} matched a job in the DB by url, "
+            print(f"{c['cases']} eval cases, {c['matched']} matched a job in the DB, "
                   f"{c['recorded']} decision(s) recorded, {c['unlabeled']} without a usable label")
     finally:
         store.close()
