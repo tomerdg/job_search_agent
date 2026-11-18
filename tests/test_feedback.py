@@ -149,3 +149,14 @@ def test_import_eval_counts_only(store, capsys):
     fb = {r["job_id"]: r for r in store.feedback()}
     assert fb[a]["decision"] == "applied" and fb[a]["source"] == "eval"
     assert fb[b]["decision"] == "skipped" and fb[b]["source"] == "cli"
+
+
+def test_match_cases_shared_url_needs_title():
+    from jobagent.feedback import match_cases
+    db = [("j1", "https://example.com/careers", "Data Engineer"),
+          ("j2", "https://example.com/careers", "Sales Rep"),       # same careers-page url for every job
+          ("j3", "https://example.com/jobs/3", "BI Developer")]
+    cases = [{"case_id": "a", "url": "https://example.com/careers", "title": "data  engineer"},
+             {"case_id": "b", "url": "https://example.com/careers", "title": "Product Manager"},
+             {"case_id": "c", "url": "https://example.com/jobs/3", "title": "anything"}]
+    assert match_cases(cases, db) == {"a": ["j1"], "b": [], "c": ["j3"]}

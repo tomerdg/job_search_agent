@@ -10,7 +10,7 @@ Labels, binary target `fit_or_maybe`:
     silver  the LLM score on scored jobs (score >= MIN_SCORE -> 1).
     weak    jobs whose title/description miss every pre-filter keyword -> 0 (location misses are not used:
             a job in the wrong city can still be a good role).
-A DB job that is also gold (same job id, url, or company + title) appears once, with its gold label.
+A DB job that is also gold (same job id, or company + title) appears once, with its gold label.
 
 Evaluation is cross-validated: repeated GroupKFold by company over all labels, so a company is never in both
 the training and the test part of a split (validate.check_split enforces it, per split). Every reported
@@ -80,15 +80,17 @@ def _key(company: pd.Series, title: pd.Series) -> pd.Series:
 
 
 def gold_from_eval(cases: list[dict], labels: dict[str, dict], jobs: pd.DataFrame) -> pd.DataFrame:
-    """Eval cases as rows with their own text. source and job_id come from the matching DB job (by url)."""
+    """Eval cases as rows with their own text. source and job_id come from the matching DB job
+    (jobagent.feedback.match_cases: url, plus title when the url is shared)."""
     df = pd.DataFrame(cases)
     if df.empty:
         return df
     df["label"] = df["case_id"].map(lambda c: (labels.get(c) or {}).get("label", ""))
     df = df[df["label"].isin(["fit", "maybe", "no_fit"])].copy()
-    by_url = jobs.dropna(subset=["url"]).drop_duplicates("url").set_index("url")
-    df["source"] = df["url"].map(by_url["source"]).fillna("unknown")
-    df["job_id"] = df["url"].map(by_url["job_id"])
+    from jobagent.feedback import match_cases  # url alone only when no other DB job shares it
+    matches = match_cases(df.to_dict("records"), list(jobs[["job_id", "url", "title"]].itertuples(index=False)))
+    df["job_id"] = df["case_id"].map(lambda c: (matches.get(c) or [None])[0])
+    df["source"] = df["job_id"].map(jobs.drop_duplicates("job_id").set_index("job_id")["source"]).fillna("unknown")
     df["y"] = df["label"].isin(["fit", "maybe"]).astype(int)
     df["is_fit"] = df["label"].eq("fit").astype(int)
     df["origin"] = "eval"
@@ -130,7 +132,8 @@ def training_rows(jobs: pd.DataFrame, gold: pd.DataFrame, profile: dict,
 
     in_gold = np.zeros(len(df), bool)
     if not gold.empty:
-        in_gold = (df["job_id"].isin(gold["job_id"].dropna()) | df["url"].isin(gold["url"].dropna())
+        # Not by url alone: a url shared by many jobs (one careers page for all) would drop unrelated jobs.
+        in_gold = (df["job_id"].isin(gold["job_id"].dropna())
                    | _key(df["company"], df["title"]).isin(_key(gold["company"], gold["title"]))).to_numpy()
     return df[(df["tier"] != "") & ~in_gold].reset_index(drop=True)
 
