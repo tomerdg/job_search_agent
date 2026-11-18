@@ -93,3 +93,10 @@ def test_class_drift_warns_but_does_not_fail():
     assert v.results["labels.class_drift"] is False and v.warnings
     assert V.class_drift(0.12, {"train_pos_rate": 0.1}).results["labels.class_drift"]
     assert V.class_drift(0.5, None).results["labels.class_drift"]
+
+
+def test_shared_careers_url_is_not_leakage():
+    page = "https://example.com/careers"
+    train = _jobs(["a", "b"], [page, page], ["Data Engineer", "BI Dev"])
+    gold = _jobs(["c"], [page], ["Sales Rep"])
+    assert V.check_no_leakage(train, gold).results["leakage.gold_not_in_train"]

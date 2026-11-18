@@ -108,8 +108,15 @@ def check_labels(y, v: Validation | None = None, min_positives: int = MIN_POSITI
     return v
 
 
+def _single_job_urls(df: pd.DataFrame) -> set:
+    """Urls that name exactly one row. Some sites give every job the same careers-page url, so a shared
+    url is not evidence of the same job."""
+    counts = df["url"].dropna().value_counts()
+    return set(counts.index[counts == 1])
+
+
 def check_no_leakage(train: pd.DataFrame, gold: pd.DataFrame, v: Validation | None = None) -> Validation:
-    """No job on both sides: same job_id, same url, or same normalised company + title."""
+    """No job on both sides: same job_id, same single-job url, or same normalised company + title."""
     v = v or Validation()
     if gold.empty or train.empty:
         v.require("leakage.gold_not_in_train", True, "")
@@ -121,7 +128,7 @@ def check_no_leakage(train: pd.DataFrame, gold: pd.DataFrame, v: Validation | No
 
     hits = {
         "job_id": np.intersect1d(train["job_id"].dropna(), gold["job_id"].dropna()).size,
-        "url": np.intersect1d(train["url"].dropna(), gold["url"].dropna()).size,
+        "url": len(_single_job_urls(train) & _single_job_urls(gold)),
         "company_title": np.intersect1d(keys(train), keys(gold)).size,
     }
     v.require("leakage.gold_not_in_train", not any(hits.values()),
