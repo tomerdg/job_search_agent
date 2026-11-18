@@ -129,6 +129,33 @@ marts         fct_job_postings      one row per job: opened, closed, days open (
 latest good run of their source); a dbt **unit test** for the Hebrew/English role classifier; and a `warn` test
 that fires when a source returned nothing three runs in a row.
 
+## Relevance model (offline)
+
+A cheap classifier that predicts whether a job is worth an LLM call, trained offline and compared with the
+keyword pre-filter and the LLM score. It is not in the daily run yet.
+
+```bash
+pip install -r requirements-ml.txt
+python -m jobagent.ml.train --report      # local DB + eval set -> MLflow run + eval/out/relevance/
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+- **Features** (`jobagent/ml/features.py`, pandas + numpy): role family (same rules as the dbt model), seniority,
+  required years parsed from the JD (English and Hebrew), pre-filter role/location, JD length, Hebrew share, and
+  overlap between a generic list of data skills in the JD and in the CV (read at runtime, never stored).
+  Text goes through TF-IDF (words + character n-grams); everything is stacked into one `scipy.sparse` matrix.
+- **Labels**: gold = your own labels (eval set + `--applied`/`--skipped`/`--irrelevant`), used only for
+  evaluation; training = LLM scores plus jobs with no role keyword as weak negatives. Gold jobs never reach training.
+- **Models**: logistic regression on all features; shallow XGBoost on the 200 strongest terms (chi2).
+- **Evaluation**: ROC/PR AUC on gold with bootstrap CIs (`scipy.stats.bootstrap`), recall and share of jobs
+  filtered at the threshold that keeps 95% recall, paired bootstrap of the LR − XGBoost AUC difference, and a
+  Wilcoxon test on per-fold AUCs from repeated GroupKFold by company.
+- **Validation** (`jobagent/ml/validate.py`): feature columns, dtypes, NaN/inf, value ranges, minimum positives,
+  leakage, and prediction sanity. It runs inside training and prediction and stops the run on failure.
+- **Tracking**: MLflow experiment `relevance-model` with params, dataset hash, git sha, metrics, a validation tag
+  per check, and a PR curve. Locally the better model is registered as `relevance-model`. CI runs a smoke run on
+  demo data and gates it against `jobagent/ml/baselines/demo.json`, logging aggregates only.
+
 ## Project layout
 
 | Part | Where |
@@ -140,6 +167,7 @@ that fires when a source returned nothing three runs in a row.
 | Claude agent and tools | `jobagent/agent.py` |
 | Digest (Telegram / email) | `jobagent/notify.py` |
 | dbt project | `analytics/` |
+| Relevance model (features, training, validation) | `jobagent/ml/` |
 | Synthetic demo data | `jobagent/demo.py` |
 | Pipeline (CI + schedule) | `.github/workflows/daily.yml` |
 
