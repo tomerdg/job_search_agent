@@ -29,3 +29,7 @@ eval/dataset/baseline.json
 mlruns/
 mlartifacts/
 mlflow.db
+# Relevance model: trained models never go to git (MLflow keeps them locally in mlruns/)
+*.joblib
+*.pkl
+/models/

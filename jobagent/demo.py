@@ -24,11 +24,41 @@ COMPANIES = [  # (name, sector, source type, city, jobs opened per run on averag
     ("Quanta Ads", "adtech", "greenhouse", "Tel Aviv", 2.0),
     ("Silent Source Ltd", "retail", "adam", "הרצליה", 0.5),  # stops returning jobs: source-health demo
 ]
+# Synthetic CV and profile for the demo and the ML smoke run. Not anyone's real data.
+DEMO_CV = "Data engineer. SQL, Python, pandas, numpy, dbt, Airflow, DuckDB, Docker, GitHub Actions, AWS, ETL."
+DEMO_PROFILE = {
+    "keywords": ["data engineer", "analytics engineer", "BI", "etl", "מהנדס/ת נתונים", "מפתח/ת BI"],
+    "locations_allowed": ["תל אביב", "tel aviv", "רמת גן", "פתח תקווה", "בני ברק"],
+    "locations_blocked": ["הרצליה"],
+}
+SKILL_POOL = {  # skills a synthetic description draws from, by kind of role
+    "data": ["SQL", "Python", "dbt", "Airflow", "Spark", "Kafka", "Snowflake", "BigQuery", "pandas", "Docker",
+             "AWS", "ETL", "Power BI", "Tableau", "Databricks"],
+    "other": ["Java", "React", "Excel", "Salesforce", "Figma", "Kubernetes", "Selenium", "CRM"],
+}
 TITLES = [
     "Data Engineer", "Senior Data Engineer", "Analytics Engineer", "BI Developer", "מפתח/ת BI",
     "מהנדס/ת נתונים", "Data Analyst", "Data Scientist", "Backend Developer", "Product Manager",
     "QA Engineer", "נציג/ת שירות לקוחות", "Marketing Analyst", "DevOps Engineer",
 ]
+
+
+def describe(rng: random.Random, title: str, counter: int) -> str:
+    """A synthetic job description: skills by role, years in English or Hebrew."""
+    data_role = any(k in title for k in ("Data", "BI", "Analytics", "נתונים"))
+    pool = SKILL_POOL["data"] if data_role else SKILL_POOL["other"]
+    skills = rng.sample(pool, k=rng.randint(2, 6)) + rng.sample(SKILL_POOL["data"] + SKILL_POOL["other"], k=1)
+    years = rng.randint(1, 7)
+    hebrew = any("\u0590" <= ch <= "\u05FF" for ch in title)
+    req = f"לפחות {years} שנות ניסיון" if hebrew else f"{years}+ years of experience"
+    return f"Synthetic job {counter}: {title}. {req}. Tools: {', '.join(skills)}."
+
+
+def demo_score(rng: random.Random, title: str, description: str) -> int:
+    """LLM-like score: role fit plus overlap with DEMO_CV's skills, plus noise."""
+    data_role = any(k in title for k in ("Data Engineer", "BI", "Analytics", "נתונים", "מפתח/ת BI"))
+    overlap = sum(s.lower() in DEMO_CV.lower() for s in SKILL_POOL["data"] if s in description)
+    return max(0, min(100, int(25 + 30 * data_role + 8 * overlap + rng.gauss(0, 10))))
 
 
 def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
@@ -54,7 +84,7 @@ def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
                     title = rng.choice(TITLES)
                     j = Job(source=stype, company=name, external_id=str(counter), title=title,
                             url=f"https://example.com/jobs/{counter}", location=city,
-                            description=f"Synthetic job {counter}: {title}. SQL, Python, Airflow.", sector=sector)
+                            description=describe(rng, title, counter), sector=sector)
                     open_jobs[j.job_id] = (j, day + timedelta(days=rng.randint(5, 75)))
                 company_jobs = [j for j, close in open_jobs.values() if j.company == name and close > day]
                 stats.append({"company": name, "source_type": stype, "ok": True, "n_jobs": len(company_jobs),
@@ -69,13 +99,15 @@ def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
                 data_role = any(k in job.title for k in ("Data", "BI", "Analytics", "נתונים"))
                 store.set_prefilter(jid, data_role)
                 if data_role:
-                    store.save_score(jid, rng.randint(40, 95), {"summary": "demo", "strengths": [], "gaps": []})
-                    # Synthetic owner decisions: some high scorers applied to, some skipped, a few irrelevant.
-                    pick = rng.random()
-                    if pick < 0.25:
-                        decision = rng.choice(["applied", "applied", "skipped", "irrelevant"])
-                        store.record_feedback([jid], decision, ts=day + timedelta(days=rng.randint(0, 3)),
-                                              source=rng.choice(["cli", "cli", "eval"]))
+                    score = demo_score(rng, job.title, job.description)
+                    store.save_score(jid, score, {"summary": "demo", "strengths": [], "gaps": []})
+                # Synthetic owner decisions on a third of all jobs, following the score with noise.
+                if rng.random() < 0.33:
+                    score = demo_score(rng, job.title, job.description)
+                    decision = ("applied" if score >= 65 else "skipped" if score >= 45 else "irrelevant") \
+                        if rng.random() > 0.1 else rng.choice(["applied", "skipped", "irrelevant"])
+                    store.record_feedback([jid], decision, ts=day + timedelta(days=rng.randint(0, 3)),
+                                          source=rng.choice(["cli", "cli", "eval"]))
             store.finish_run(run_id, len(live), len(new_ids), ts=day)
             open_jobs = {k: v for k, v in open_jobs.items() if v[1] > day}
         day += timedelta(days=1)
