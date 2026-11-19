@@ -21,6 +21,12 @@ models:
         description: Prompt file (jobagent/prompts/<version>.txt) that produced match_score. NULL for scores saved before it was tracked.
       - name: scoring_model
         description: Claude model that produced match_score. NULL for scores saved before it was tracked.
+      - name: ml_score
+        description: >
+          Relevance model P(fit or maybe), shadow mode: orders the LLM queue, never filters. Frozen once the
+          LLM scores the job, so it is the model's guess before the LLM saw the job.
+      - name: ml_scored_at
+        description: When the relevance model last scored the job (the run that set ml_score).
 
   - name: stg_runs
     columns:

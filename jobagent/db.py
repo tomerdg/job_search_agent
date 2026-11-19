@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS job_feedback (
 -- Added later; ADD COLUMN IF NOT EXISTS migrates databases created before.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS prompt_version VARCHAR;  -- prompt that produced score
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model VARCHAR;           -- model that produced score
+-- Relevance model in shadow mode (jobagent/ml/shadow.py): P(fit or maybe), never used to filter yet.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ml_score DOUBLE;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ml_model_version VARCHAR;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ml_scored_at TIMESTAMP;
 """
 
 DECISIONS = ("applied", "skipped", "irrelevant")
@@ -255,8 +259,9 @@ class Store:
 
     def pending_scoring(self, limit: int = 40) -> list[dict]:
         return self._all(
+            # The relevance model only reorders the queue (shadow mode): its best guesses reach the LLM first.
             "SELECT * FROM jobs WHERE prefilter AND score IS NULL AND is_active "
-            "ORDER BY first_seen DESC, job_id LIMIT ?", (limit,)
+            "ORDER BY ml_score DESC NULLS LAST, first_seen DESC, job_id LIMIT ?", (limit,)
         )
 
     def save_score(self, job_id: str, score: int, analysis: dict,
@@ -265,6 +270,13 @@ class Store:
             "UPDATE jobs SET score=?, analysis=?, prompt_version=?, model=? WHERE job_id=?",
             (int(score), json.dumps(analysis, ensure_ascii=False), prompt_version, model, job_id),
         )
+
+    def save_ml_scores(self, scores: dict[str, float], version: str, ts: datetime | None = None) -> None:
+        ts = ts or now()
+        if scores:
+            self.conn.executemany(
+                "UPDATE jobs SET ml_score=?, ml_model_version=?, ml_scored_at=? WHERE job_id=?",
+                [(float(p), version, ts, job_id) for job_id, p in scores.items()])
 
     def top_unsent(self, n: int = 3, min_score: int = DEFAULT_MIN_SCORE) -> list[dict]:
         return self._all(

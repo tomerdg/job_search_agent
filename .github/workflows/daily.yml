@@ -10,6 +10,7 @@ name: daily-job-search
 #                  GitHub user can download its artifacts, so they are never uploaded unencrypted.
 #   feedback    -> data/feedback.csv.enc (committed, encrypted with DB_PASSPHRASE): decrypted to
 #                  $RUNNER_TEMP and mounted read-only into the container, then deleted.
+#   eval set    -> eval/dataset/*.enc, the same way: gold labels for the relevance model (shadow mode).
 #   dbt marts   -> only pass/warn counts reach the log, never rows.
 
 on:
@@ -56,7 +57,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install -r requirements.txt -r requirements-dbt.txt -r requirements-eval.txt -r requirements-ml.txt
+      - run: pip install -r requirements.txt -r requirements-dbt.txt -r requirements-eval.txt -r requirements-ml-train.txt
       - run: pytest -q
 
       # dbt models + tests against a synthetic DB (made-up companies and jobs, no real data).
@@ -131,6 +132,17 @@ jobs:
           DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
         run: scripts/dbcrypt.sh decrypt data/feedback.csv.enc "$RUNNER_TEMP/feedback.csv"
 
+      # The labelled eval set, as gold training rows for the relevance model (shadow mode). Same rules as
+      # feedback.csv: decrypted to $RUNNER_TEMP only, mounted read-only, deleted after the run, never printed.
+      - name: Decrypt eval set for the relevance model
+        if: env.HAS_DB_KEY == 'true' && hashFiles('eval/dataset/jobs.jsonl.enc') != '' && hashFiles('eval/dataset/labels.csv.enc') != ''
+        env:
+          DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/evalset"
+          scripts/dbcrypt.sh decrypt eval/dataset/jobs.jsonl.enc "$RUNNER_TEMP/evalset/jobs.jsonl"
+          scripts/dbcrypt.sh decrypt eval/dataset/labels.csv.enc "$RUNNER_TEMP/evalset/labels.csv"
+
       - name: Build image
         run: docker build -t job-search-agent .
 
@@ -148,9 +160,13 @@ jobs:
         run: |
           mkdir -p data
           feedback=()
+          trap 'rm -rf "$RUNNER_TEMP/feedback.csv" "$RUNNER_TEMP/evalset"' EXIT
           if [ -f "$RUNNER_TEMP/feedback.csv" ]; then
-            trap 'rm -f "$RUNNER_TEMP/feedback.csv"' EXIT
             feedback=(-v "$RUNNER_TEMP/feedback.csv:/run/feedback.csv:ro" -e FEEDBACK_CSV=/run/feedback.csv)
+          fi
+          if [ -f "$RUNNER_TEMP/evalset/jobs.jsonl" ] && [ -f "$RUNNER_TEMP/evalset/labels.csv" ]; then
+            feedback+=(-v "$RUNNER_TEMP/evalset:/run/evalset:ro"
+                       -e EVAL_JOBS_JSONL=/run/evalset/jobs.jsonl -e EVAL_LABELS_CSV=/run/evalset/labels.csv)
           fi
           docker run --rm \
             -e ANTHROPIC_API_KEY -e PROFILE_YAML -e CV_TEXT \

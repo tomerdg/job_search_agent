@@ -132,10 +132,15 @@ that fires when a source returned nothing three runs in a row.
 ## Relevance model (offline)
 
 A cheap classifier that predicts whether a job is worth an LLM call, trained offline and compared with the
-keyword pre-filter and the LLM score. It is not in the daily run yet.
+keyword pre-filter and the LLM score. In the daily run it works in **shadow mode** (`jobagent/ml/shadow.py`):
+each run retrains the logistic-regression model from the labels in the DB plus the encrypted eval set (decrypted to
+the runner's temp folder and mounted read-only, like `feedback.csv`; no model file is kept), scores every
+active job the LLM has not scored into `jobs.ml_score`, and only reorders the LLM queue. It never filters. With
+too few labels, a failed check or no ML packages, it logs a line and the run continues as before (`--no-ml` turns
+it off). `mart_ml_vs_llm` tracks agreement with the LLM per week, with a `warn` test when it drops.
 
 ```bash
-pip install -r requirements-ml.txt
+pip install -r requirements-ml-train.txt -r requirements-eval.txt
 python -m jobagent.ml.train --report      # local DB + eval set -> MLflow run + eval/out/relevance/
 mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
@@ -239,6 +244,7 @@ Run it by hand from the Actions tab (`daily-job-search` → Run workflow). The m
 | Preferences (roles, keywords, locations) | `config/profile.yaml` | secret `PROFILE_YAML` |
 | Job history + scores | `data/jobs.duckdb` | Actions cache, encrypted with `DB_PASSPHRASE`, never committed |
 | Your applied/skipped decisions | `data/jobs.duckdb`, `data/feedback.csv` | `data/feedback.csv.enc`, committed encrypted; decrypted to the runner's temp dir, never into `data/` |
+| Eval labels (for the relevance model) | `eval/dataset/*.jsonl`, `*.csv` | `eval/dataset/*.enc`; the daily run decrypts them to the runner's temp dir, mounted read-only, deleted after |
 | dbt marts | `data/warehouse.duckdb` | built on the runner; the log shows only test counts |
 | Downloadable copy of both | | artifact `job-db` on each run, encrypted with `DB_PASSPHRASE`, kept 30 days |
 | Digest | printed with `--no-notify` | Telegram / email only |

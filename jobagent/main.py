@@ -37,6 +37,7 @@ def main(argv=None) -> None:
     ap.add_argument("--sources", default=str(ROOT / "config" / "sources.yaml"))
     ap.add_argument("--profile", default=os.environ.get("PROFILE_PATH", str(ROOT / "config" / "profile.yaml")))
     ap.add_argument("--no-llm", action="store_true", help="fetch and filter only, skip Claude")
+    ap.add_argument("--no-ml", action="store_true", help="skip the relevance model (shadow mode)")
     ap.add_argument("--no-notify", action="store_true", help="print the digest instead of sending it")
     ap.add_argument("--mark-seen", nargs="+", metavar="ID",
                     help="mark jobs as seen (ids from the digest) so they are never sent again, then exit")
@@ -68,6 +69,16 @@ def main(argv=None) -> None:
         run(store, args, sources, profile)
     finally:
         store.close()
+
+
+def cv_text(profile: dict) -> str | None:
+    """The CV for the relevance model, or None (logged) when there is none."""
+    from jobagent.cv import load_cv
+    try:
+        return load_cv(os.environ.get("CV_PATH") or ROOT / profile.get("cv_path", "cv.pdf")) or None
+    except Exception as e:  # noqa: BLE001 - a missing or unreadable CV only skips the model
+        log.info("No CV for the relevance model (%s)", type(e).__name__)
+        return None
 
 
 def resolve_for_feedback(store, prefixes: list[str]) -> list[str]:
@@ -123,6 +134,13 @@ def run(store, args, sources: list[dict], profile: dict) -> None:
         store.set_prefilter(row["job_id"], ok)
         passed += ok
     log.info("%d unscored jobs pass the pre-filter", passed)
+
+    # Shadow mode: score and reorder the LLM queue, never filter.
+    if not getattr(args, "no_ml", False):
+        cv = cv_text(profile)
+        if cv:
+            from jobagent.ml.shadow import shadow_score
+            shadow_score(store, cv, profile)
 
     if not args.no_llm and os.environ.get("ANTHROPIC_API_KEY"):
         from jobagent.agent import Agent
