@@ -1,0 +1,84 @@
+name: retrieval-eval
+
+# Quality gate for JD retrieval (jobagent/rag): indexes the eval set's JDs with the real embedding model and
+# measures recall@k, MRR and nDCG for vector, BM25 and hybrid search against eval/retrieval/queries.jsonl.
+# No API calls, so it is free; it runs when the RAG code, the queries or the metrics change.
+# Kept apart from scoring-eval.yml, which costs about $0.70 a run and should not run for retrieval changes.
+#
+# Personal data stays out of the log and artifacts: the eval set is committed encrypted and decrypted in
+# memory with DB_PASSPHRASE; only metrics and query ids reach the log and the artifact.
+
+on:
+  pull_request:
+    paths:
+      - "jobagent/rag/**"
+      - "eval/retrieval/**"
+      - "eval/metrics.py"
+      - "requirements-rag.txt"
+      - ".github/workflows/retrieval-eval.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retrieval-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  retrieval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HAS_SECRETS: ${{ secrets.DB_PASSPHRASE != '' }}
+      RAG_MODEL_CACHE: ${{ github.workspace }}/.cache/fastembed
+    steps:
+      - name: Skip without secrets
+        if: env.HAS_SECRETS != 'true'
+        run: echo "::notice::Retrieval eval skipped - DB_PASSPHRASE is not available (e.g. a PR from a fork)."
+
+      - uses: actions/checkout@v4
+        if: env.HAS_SECRETS == 'true'
+
+      - uses: actions/setup-python@v5
+        if: env.HAS_SECRETS == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ml.txt
+            requirements-eval.txt
+            requirements-rag.txt
+
+      # The embedding model (~220 MB) is downloaded once and kept in the Actions cache.
+      - name: Restore embedding model
+        if: env.HAS_SECRETS == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .cache/fastembed
+          key: fastembed-paraphrase-multilingual-MiniLM-L12-v2-${{ hashFiles('requirements-rag.txt') }}
+
+      - name: Install
+        if: env.HAS_SECRETS == 'true'
+        run: pip install -r requirements.txt -r requirements-ml.txt -r requirements-eval.txt -r requirements-rag.txt
+
+      - name: Evaluate and gate
+        if: env.HAS_SECRETS == 'true'
+        env:
+          DB_PASSPHRASE: ${{ secrets.DB_PASSPHRASE }}
+          MLFLOW_TRACKING_URI: sqlite:///${{ runner.temp }}/mlflow.db
+          MLFLOW_DISABLE_AGENT_HINT: "1"
+        run: |
+          python -m eval.retrieval --modes vector bm25 hybrid --gate | tee "$RUNNER_TEMP/retrieval.md"
+          { echo "## Retrieval eval"; grep '^|' "$RUNNER_TEMP/retrieval.md"; grep '^Gate' "$RUNNER_TEMP/retrieval.md"; } \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metrics
+        if: always() && env.HAS_SECRETS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-metrics
+          path: eval/out/retrieval/*.json
+          retention-days: 30
+          if-no-files-found: ignore

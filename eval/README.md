@@ -159,3 +159,40 @@ Result: **v1 on Sonnet stays in production.**
   next comparison decisive.
 - The v2 run crashed after scoring (since fixed), so its tokens, cost and fit/maybe means were not kept and
   it is not in MLflow; its metrics were recomputed from the saved per-case scores.
+
+## Retrieval evaluation
+
+`python -m eval.retrieval` measures the JD search in `jobagent/rag/retrieve.py`, separately from scoring.
+It indexes the eval set's JDs (82 jobs, decrypted in memory in CI) with the real embedding model and runs
+the queries in `eval/retrieval/queries.jsonl` in each mode: `vector`, `bm25` and `hybrid` (reciprocal rank
+fusion, k=60). Ranking is per job (one chunk per job), and the metrics are recall@5, recall@10, MRR and
+nDCG@10 (`eval/metrics.py`). recall@k divides by min(k, relevant jobs), so a query with more than k relevant
+jobs can still reach 1. One MLflow run per mode goes to the experiment `retrieval` (params: model id,
+chunking version, k, corpus size, queries hash; metrics only, no text).
+
+The queries are generic (skills, Hebrew phrasings, role types, paraphrases). Each has a **rule** for which
+jobs are relevant (skills named in the JD, the title's role family, or a regex), not a list of job ids, so
+the file is public and runs on any corpus. `scripts/draft_retrieval_queries.py` drafts it and prints how
+many jobs each rule matches. The catch: a skill rule is a keyword match, which favours BM25 by construction,
+so results are reported per kind, and the paraphrase queries are the ones where vectors have to earn it.
+
+`.github/workflows/retrieval-eval.yml` runs it on PRs that touch the RAG code or the queries (no API cost)
+and fails when hybrid recall@10 drops below 0.7. `--db data/jobs.duckdb` runs it on a copy of a jobs DB.
+
+### First run (2026-11-22, `paraphrase-multilingual-MiniLM-L12-v2`, chunking c1, 36 queries)
+
+| mode | all: recall@10 | MRR | nDCG@10 | skill (19) | Hebrew (7) | role (5) | paraphrase (5) |
+|---|---|---|---|---|---|---|---|
+| vector | 0.436 | 0.683 | 0.441 | 0.348 | 0.329 | 0.900 | 0.460 |
+| bm25 | 0.755 | 0.898 | 0.764 | 0.920 | 0.414 | 0.860 | 0.500 |
+| hybrid | **0.773** | **0.910** | **0.773** | 0.843 | **0.586** | 0.860 | **0.680** |
+
+(per-kind columns are recall@10)
+
+- Hybrid is best overall and on the Hebrew and paraphrase queries, and beats vector-only on skill names
+  by a wide margin (0.843 vs 0.348), which is the reason for keeping BM25.
+- BM25 alone is best on skill queries, partly by construction (keyword rules).
+- Vector-only is weak. One known cause: this model truncates its input at 128 tokens, so most of an
+  ~800-character chunk is never seen (Hebrew uses more tokens per character). Next things to try, measured
+  with this same eval: smaller chunks, or a model with a longer input (`paraphrase-multilingual-mpnet-base-v2`,
+  512 tokens, 768 dims, ~1 GB).
