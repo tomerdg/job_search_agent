@@ -1,0 +1,36 @@
+{"qid": "skill-dbt", "kind": "skill", "query": "dbt", "relevant": {"skills": ["dbt"]}}
+{"qid": "skill-airflow", "kind": "skill", "query": "Airflow orchestration", "relevant": {"skills": ["airflow"]}}
+{"qid": "skill-kafka", "kind": "skill", "query": "Kafka streaming", "relevant": {"skills": ["kafka"]}}
+{"qid": "skill-snowflake", "kind": "skill", "query": "Snowflake", "relevant": {"skills": ["snowflake"]}}
+{"qid": "skill-bigquery", "kind": "skill", "query": "BigQuery", "relevant": {"skills": ["bigquery"]}}
+{"qid": "skill-databricks", "kind": "skill", "query": "Databricks", "relevant": {"skills": ["databricks"]}}
+{"qid": "skill-redshift", "kind": "skill", "query": "Redshift", "relevant": {"skills": ["redshift"]}}
+{"qid": "skill-tableau", "kind": "skill", "query": "Tableau dashboards", "relevant": {"skills": ["tableau"]}}
+{"qid": "skill-looker", "kind": "skill", "query": "Looker", "relevant": {"skills": ["looker"]}}
+{"qid": "skill-kubernetes", "kind": "skill", "query": "Kubernetes", "relevant": {"skills": ["kubernetes"]}}
+{"qid": "skill-terraform", "kind": "skill", "query": "Terraform", "relevant": {"skills": ["terraform"]}}
+{"qid": "skill-scala", "kind": "skill", "query": "Scala", "relevant": {"skills": ["scala"]}}
+{"qid": "skill-docker", "kind": "skill", "query": "Docker containers", "relevant": {"skills": ["docker"]}}
+{"qid": "skill-clickhouse", "kind": "skill", "query": "ClickHouse", "relevant": {"jd": "clickhouse"}}
+{"qid": "skill-dbt-snowflake", "kind": "skill", "query": "dbt and Snowflake", "relevant": {"skills": ["dbt", "snowflake"]}}
+{"qid": "skill-spark-kafka", "kind": "skill", "query": "Spark and Kafka", "relevant": {"skills": ["spark", "kafka"]}}
+{"qid": "skill-airflow-python", "kind": "skill", "query": "Airflow with Python", "relevant": {"skills": ["airflow", "python"]}}
+{"qid": "skill-modeling", "kind": "skill", "query": "data modeling and data warehouse design", "relevant": {"skills": ["data_modeling"]}}
+{"qid": "skill-cicd", "kind": "skill", "query": "CI/CD", "relevant": {"skills": ["ci_cd"]}}
+{"qid": "he-spark", "kind": "hebrew", "query": "מהנדס נתונים עם ניסיון ב-Spark", "relevant": {"skills": ["spark"]}}
+{"qid": "he-sql-python", "kind": "hebrew", "query": "ניסיון ב-SQL ובפייתון", "relevant": {"skills": ["sql", "python"]}}
+{"qid": "he-etl", "kind": "hebrew", "query": "פיתוח תהליכי ETL", "relevant": {"skills": ["etl"]}}
+{"qid": "he-powerbi", "kind": "hebrew", "query": "ניסיון בפיתוח דוחות Power BI", "relevant": {"skills": ["power_bi"]}}
+{"qid": "he-kafka", "kind": "hebrew", "query": "עבודה עם Kafka", "relevant": {"skills": ["kafka"]}}
+{"qid": "he-analyst", "kind": "hebrew", "query": "אנליסט/ית נתונים", "relevant": {"role": "analytics"}}
+{"qid": "he-data-engineer", "kind": "hebrew", "query": "מהנדס/ת דאטה", "relevant": {"role": "data_engineering"}}
+{"qid": "role-de", "kind": "role", "query": "Data Engineer", "relevant": {"role": "data_engineering"}}
+{"qid": "role-analyst", "kind": "role", "query": "data analyst or product analyst", "relevant": {"role": "analytics"}}
+{"qid": "role-bi", "kind": "role", "query": "BI developer", "relevant": {"role": "bi"}}
+{"qid": "role-ds", "kind": "role", "query": "data scientist, machine learning", "relevant": {"role": "data_science"}}
+{"qid": "role-ae", "kind": "role", "query": "analytics engineer", "relevant": {"role": "analytics_engineering"}}
+{"qid": "para-realtime", "kind": "paraphrase", "query": "process events as they happen with low latency", "relevant": {"jd": "real[- ]?time|streaming"}}
+{"qid": "para-from-scratch", "kind": "paraphrase", "query": "first data hire, set up the data stack", "relevant": {"jd": "from scratch|from the ground up|greenfield|first data|founding"}}
+{"qid": "para-mentor", "kind": "paraphrase", "query": "coach and grow other engineers on the team", "relevant": {"jd": "mentor|ניהול צוות|team lead|lead a team"}}
+{"qid": "para-quality", "kind": "paraphrase", "query": "make sure the numbers in reports can be trusted", "relevant": {"jd": "data quality|data integrity|data validation|איכות ה?נתונים"}}
+{"qid": "para-cloud", "kind": "paraphrase", "query": "work on Amazon's cloud", "relevant": {"skills": ["aws"]}}

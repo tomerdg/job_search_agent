@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
 
 import pandas as pd
@@ -29,13 +30,23 @@ def chunk_id(job_id: str, chash: str) -> str:
     return hashlib.sha1(f"{job_id}\x1f{chash}".encode()).hexdigest()[:16]
 
 
-def eligible_jobs(store: Store) -> pd.DataFrame:
-    """Active jobs worth indexing: passed the pre-filter, or have a data-ish title (role_family, the same
-    rules as the relevance model and dbt's int_job_roles), so the index is not limited to today's profile."""
+def index_scope() -> str:
+    """Env RAG_INDEX_SCOPE: 'data' (default) indexes data-ish jobs, 'all' every active job (for `ask`
+    over the whole history, ~6 chunks per job)."""
+    scope = (os.environ.get("RAG_INDEX_SCOPE") or "data").lower()
+    if scope not in ("data", "all"):
+        raise ValueError(f"RAG_INDEX_SCOPE must be 'data' or 'all', got {scope!r}")
+    return scope
+
+
+def eligible_jobs(store: Store, scope: str | None = None) -> pd.DataFrame:
+    """Active jobs worth indexing. scope 'data': passed the pre-filter, or have a data-ish title
+    (role_family, the same rules as the relevance model and dbt's int_job_roles), so the index is not
+    limited to today's profile. scope 'all': every active job."""
     from jobagent.ml.features import role_family
     df = store.conn.execute(
         "SELECT job_id, company, title, description, prefilter FROM jobs WHERE is_active ORDER BY job_id").df()
-    if df.empty:
+    if df.empty or (scope or index_scope()) == "all":
         return df
     keep = df["prefilter"].fillna(False).astype(bool) | (role_family(df["title"]) != "other")
     return df[keep.to_numpy()].reset_index(drop=True)
@@ -75,11 +86,12 @@ def embed_missing(store: Store, embedder: Embedder, batch: int = EMBED_BATCH, ts
     return done
 
 
-def index_jobs(store: Store, embedder: Embedder, run_id: str | None = None, ts=None) -> dict:
+def index_jobs(store: Store, embedder: Embedder, run_id: str | None = None, ts=None,
+               scope: str | None = None) -> dict:
     """Chunk the eligible jobs, apply the diff to job_chunks, embed what is missing, record the counts.
     ts: the run time (default now); the demo passes its synthetic clock."""
     t0, ts, con = time.time(), ts or now(), store.conn
-    jobs = eligible_jobs(store)
+    jobs = eligible_jobs(store, scope)
     new, dropped = _chunk_rows(jobs) if not jobs.empty else (pd.DataFrame(
         columns=["chunk_id", "job_id", "section", "seq", "text", "content_hash"]), 0)
     ids = pd.DataFrame({"job_id": jobs["job_id"] if not jobs.empty else pd.Series([], dtype=str)})  # noqa: F841

@@ -168,3 +168,44 @@ def compare(current: pd.DataFrame, baseline: pd.DataFrame, threshold: float,
     return {"n_paired": len(both), "mae_delta": float(diff.mean()), "wilcoxon_p": p,
             "f1_delta": binary(s_cur, y, threshold)["f1"] - binary(s_base, y, threshold)["f1"],
             "f1_delta_ci_low": float(lo), "f1_delta_ci_high": float(hi), "verdict": verdict}
+
+
+# ---- retrieval (eval/retrieval) ----
+# `ranked` is a list of ids, best first; `relevant` the set of ids that should come back. Pure, unit-tested.
+
+def recall_at_k(ranked, relevant, k: int) -> float:
+    """Share of the relevant ids in the top k, out of min(k, |relevant|), so a query with more relevant
+    ids than k can still reach 1. NaN when nothing is relevant."""
+    relevant = set(relevant)
+    if not relevant:
+        return float("nan")
+    return len(set(list(ranked)[:k]) & relevant) / min(k, len(relevant))
+
+
+def reciprocal_rank(ranked, relevant) -> float:
+    """1 / rank of the first relevant id (0 when none is retrieved). The mean over queries is MRR."""
+    relevant = set(relevant)
+    return next((1.0 / i for i, r in enumerate(ranked, 1) if r in relevant), 0.0)
+
+
+def ndcg_at_k(ranked, relevant, k: int) -> float:
+    """Binary-gain nDCG@k: DCG of the top k over the DCG of a perfect ranking. NaN when nothing is relevant."""
+    relevant = set(relevant)
+    if not relevant:
+        return float("nan")
+    dcg = sum(1 / np.log2(i + 1) for i, r in enumerate(list(ranked)[:k], 1) if r in relevant)
+    ideal = sum(1 / np.log2(i + 1) for i in range(1, min(k, len(relevant)) + 1))
+    return float(dcg / ideal)
+
+
+def retrieval_summary(results: list[tuple[list, set]], ks: tuple[int, ...] = (5, 10)) -> dict:
+    """Mean recall@k (each k), MRR and nDCG@max(k) over (ranked, relevant) pairs with relevant ids."""
+    rows = [(r, g) for r, g in results if g]
+    out: dict = {"n_queries": len(rows)}
+    if not rows:
+        return out
+    for k in ks:
+        out[f"recall_at_{k}"] = float(np.mean([recall_at_k(r, g, k) for r, g in rows]))
+    out["mrr"] = float(np.mean([reciprocal_rank(r, g) for r, g in rows]))
+    out[f"ndcg_at_{max(ks)}"] = float(np.mean([ndcg_at_k(r, g, max(ks)) for r, g in rows]))
+    return out

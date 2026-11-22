@@ -96,9 +96,12 @@ only its changed chunks, and only chunks without a vector for the current model 
 their chunks, because the history is what makes the index searchable. The CV is chunked in memory at run time
 and never stored.
 
-**Hybrid search, planned.** Skill names (dbt, ClickHouse, Airflow) are exact tokens that embeddings handle
-poorly, so retrieval will combine vector search with BM25 from DuckDB's `fts` extension through reciprocal rank
-fusion (k=60).
+**Hybrid search.** Skill names (dbt, ClickHouse, Airflow) are exact tokens that embeddings handle poorly, so
+retrieval combines vector search with BM25 through reciprocal rank fusion (k=60). BM25 is a small scipy sparse
+term matrix over the same chunk table rather than DuckDB's `fts` extension: `fts` is downloaded at run time
+(tests run without network), its default tokenizer keeps only a-z and so drops Hebrew, and its index has to be
+rebuilt by hand after every insert. On the retrieval eval, hybrid beats vector-only recall@10 by 0.34 overall
+and BM25-only on Hebrew and paraphrased queries (see `eval/README.md`).
 
 **Personal data never enters git.** The CV and search preferences come from GitHub secrets at runtime. The image
 holds no personal data, the database is encrypted with a passphrase secret before it touches the Actions cache
