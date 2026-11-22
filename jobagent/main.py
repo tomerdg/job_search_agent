@@ -38,6 +38,7 @@ def main(argv=None) -> None:
     ap.add_argument("--profile", default=os.environ.get("PROFILE_PATH", str(ROOT / "config" / "profile.yaml")))
     ap.add_argument("--no-llm", action="store_true", help="fetch and filter only, skip Claude")
     ap.add_argument("--no-ml", action="store_true", help="skip the relevance model (shadow mode)")
+    ap.add_argument("--no-rag", action="store_true", help="skip chunking and embedding JDs for retrieval")
     ap.add_argument("--no-notify", action="store_true", help="print the digest instead of sending it")
     ap.add_argument("--mark-seen", nargs="+", metavar="ID",
                     help="mark jobs as seen (ids from the digest) so they are never sent again, then exit")
@@ -134,6 +135,11 @@ def run(store, args, sources: list[dict], profile: dict) -> None:
         store.set_prefilter(row["job_id"], ok)
         passed += ok
     log.info("%d unscored jobs pass the pre-filter", passed)
+
+    # Retrieval index: chunk and embed the data-ish jobs incrementally (only new or changed chunks).
+    if not getattr(args, "no_rag", False):
+        from jobagent.rag.index import index_step
+        index_step(store, run_id)
 
     # Shadow mode: score and reorder the LLM queue, never filter.
     if not getattr(args, "no_ml", False):

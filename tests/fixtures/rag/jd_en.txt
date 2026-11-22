@@ -1,0 +1,15 @@
+Acme Data is the analytics platform for retailers.
+About the role
+You will join a small team that owns the company's data platform end to end.
+What you'll do:
+Design and build batch and streaming pipelines with Airflow and Kafka.
+Model the warehouse in dbt and keep data quality high.
+Requirements:
+3+ years of experience as a Data Engineer.
+Strong SQL and Python. Experience with Snowflake or BigQuery.
+Nice to have:
+ClickHouse, Spark, Terraform.
+Perks & Benefits
+Hybrid work, gym membership, free lunch every day and a yearly team retreat.
+We are an equal opportunity employer and value diversity at our company.
+#LI-Hybrid

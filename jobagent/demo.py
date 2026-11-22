@@ -15,6 +15,8 @@ from pathlib import Path
 
 from jobagent.db import Store
 from jobagent.models import Job
+from jobagent.rag.embed import FakeEmbedder
+from jobagent.rag.index import index_jobs
 
 COMPANIES = [  # (name, sector, source type, city, jobs opened per run on average)
     ("Northwind Retail", "retail", "adam", "רמת גן", 1.2),
@@ -45,14 +47,19 @@ TITLES = [
 
 
 def describe(rng: random.Random, title: str, counter: int) -> str:
-    """A synthetic job description: skills by role, years in English or Hebrew."""
+    """A synthetic job description with section headings (for the RAG chunker): skills by role, years
+    in English or Hebrew, and an EEO line that the chunker drops as boilerplate."""
     data_role = any(k in title for k in ("Data", "BI", "Analytics", "נתונים"))
     pool = SKILL_POOL["data"] if data_role else SKILL_POOL["other"]
     skills = rng.sample(pool, k=rng.randint(2, 6)) + rng.sample(SKILL_POOL["data"] + SKILL_POOL["other"], k=1)
     years = rng.randint(1, 7)
     hebrew = any("\u0590" <= ch <= "\u05FF" for ch in title)
-    req = f"לפחות {years} שנות ניסיון" if hebrew else f"{years}+ years of experience"
-    return f"Synthetic job {counter}: {title}. {req}. Tools: {', '.join(skills)}."
+    if hebrew:
+        return (f"Synthetic job {counter}: {title}.\nתיאור התפקיד:\nפיתוח ותחזוקה של תהליכי נתונים בצוות {title}.\n"
+                f"דרישות:\nלפחות {years} שנות ניסיון. כלים: {', '.join(skills)}.\nהמשרה מיועדת לנשים ולגברים כאחד.")
+    return (f"Synthetic job {counter}: {title}.\nResponsibilities:\nBuild and own the work of a {title} "
+            f"with the product and data teams.\nRequirements:\n{years}+ years of experience. "
+            f"Tools: {', '.join(skills)}.\nWe are an equal opportunity employer.")
 
 
 def demo_score(rng: random.Random, title: str, description: str) -> int:
@@ -67,6 +74,7 @@ def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
     ml_rng = random.Random(seed + 1)  # separate stream, so the rest of the demo data does not change
     Path(db).unlink(missing_ok=True)
     store = Store(db)
+    embedder = FakeEmbedder()
     end = datetime(2026, 11, 1, 8, 0)
     start = end - timedelta(days=days)
     open_jobs: dict[str, tuple[Job, datetime]] = {}  # job_id -> (job, planned close)
@@ -114,6 +122,8 @@ def build(db: str | Path, days: int = 120, seed: int = 7) -> None:
                         if rng.random() > 0.1 else rng.choice(["applied", "skipped", "irrelevant"])
                     store.record_feedback([jid], decision, ts=day + timedelta(days=rng.randint(0, 3)),
                                           source=rng.choice(["cli", "cli", "eval"]))
+            # RAG index each run, like main.run(), with the deterministic FakeEmbedder (no model download).
+            index_jobs(store, embedder, run_id=run_id, ts=day)
             store.finish_run(run_id, len(live), len(new_ids), ts=day)
             open_jobs = {k: v for k, v in open_jobs.items() if v[1] > day}
         day += timedelta(days=1)

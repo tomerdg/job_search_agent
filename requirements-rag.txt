@@ -1,0 +1,3 @@
+# Retrieval layer (jobagent/rag): local multilingual embeddings via ONNX, no torch, no API key.
+# Not in the Docker image yet; without it the daily run skips the RAG index (see jobagent/rag/embed.py).
+fastembed>=0.4,<1
