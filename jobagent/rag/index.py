@@ -136,3 +136,30 @@ def index_step(store: Store, run_id: str | None = None) -> dict | None:
     except Exception as e:  # noqa: BLE001 - the index is an extra; scoring and the digest go on without it
         log.warning("RAG index failed (%s); continuing without it", type(e).__name__)
         return None
+
+
+def main(argv=None) -> None:
+    """python -m jobagent.rag.index [--db PATH] [--scope data|all]: build or update the index by hand."""
+    import argparse
+    from pathlib import Path
+
+    from jobagent.db import open_store
+    from jobagent.rag.embed import get_embedder
+    root = Path(__file__).resolve().parent.parent.parent
+    ap = argparse.ArgumentParser(description="Chunk and embed the jobs in a jobs DB (incremental)")
+    ap.add_argument("--db", default=os.environ.get("JOBS_DB", str(root / "data" / "jobs.duckdb")))
+    ap.add_argument("--scope", choices=["data", "all"], help="default: env RAG_INDEX_SCOPE, else data")
+    args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    embedder = get_embedder()
+    if embedder is None:
+        raise SystemExit("fastembed is not installed: pip install -r requirements-rag.txt")
+    store = open_store(args.db)
+    try:
+        index_jobs(store, embedder, run_id="manual", scope=args.scope)
+    finally:
+        store.close()
+
+
+if __name__ == "__main__":
+    main()
