@@ -80,8 +80,9 @@ def _key(company: pd.Series, title: pd.Series) -> pd.Series:
 
 
 def gold_from_eval(cases: list[dict], labels: dict[str, dict], jobs: pd.DataFrame) -> pd.DataFrame:
-    """Eval cases as rows with their own text. source and job_id come from the matching DB job
-    (jobagent.feedback.match_cases: url, plus title when the url is shared)."""
+    """Eval cases as rows with their own text. source and job_id come from the matching DB job: the case_id
+    itself when it is a DB job_id (cases are built from DB jobs, so a job fetched again under a new url or
+    title is still the same job), else jobagent.feedback.match_cases (url, plus title when the url is shared)."""
     df = pd.DataFrame(cases)
     if df.empty:
         return df
@@ -89,7 +90,8 @@ def gold_from_eval(cases: list[dict], labels: dict[str, dict], jobs: pd.DataFram
     df = df[df["label"].isin(["fit", "maybe", "no_fit"])].copy()
     from jobagent.feedback import match_cases  # url alone only when no other DB job shares it
     matches = match_cases(df.to_dict("records"), list(jobs[["job_id", "url", "title"]].itertuples(index=False)))
-    df["job_id"] = df["case_id"].map(lambda c: (matches.get(c) or [None])[0])
+    db_ids = set(jobs["job_id"])
+    df["job_id"] = df["case_id"].map(lambda c: c if c in db_ids else (matches.get(c) or [None])[0])
     df["source"] = df["job_id"].map(jobs.drop_duplicates("job_id").set_index("job_id")["source"]).fillna("unknown")
     df["y"] = df["label"].isin(["fit", "maybe"]).astype(int)
     df["is_fit"] = df["label"].eq("fit").astype(int)
