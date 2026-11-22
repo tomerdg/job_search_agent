@@ -77,6 +77,29 @@ an embedded columnar file with no server to run, and fast enough for analytical 
 
 **Reproducible "now".** Marts use the latest run time, not the wall clock, so the same database always gives the same result.
 
+**Retrieval in the same DuckDB file.** JDs are split by section (about, responsibilities, requirements,
+advantage), boilerplate such as benefits, hours and EEO lines is dropped, and each chunk is embedded with its
+`company | title | section` in front, so a chunk retrieved on its own still says where it came from. The vectors
+sit in a `FLOAT[384]` column next to the jobs and are searched exactly with `array_cosine_distance`: at a few
+thousand chunks that takes milliseconds, so no approximate index is needed yet. The `vss` extension (HNSW) is
+the next step if the corpus grows; it is not used now because persisting HNSW indexes is still experimental.
+One database keeps lineage, freshness checks and dbt tests for the index in one place.
+
+**A local multilingual embedder.** JDs come in English and Hebrew, so the model is
+`paraphrase-multilingual-MiniLM-L12-v2` (384 dims) through `fastembed` (ONNX, no torch, no API key, no
+per-call cost). It sits behind a small `Embedder` protocol (`embed`, `model_id`, `dim`), so an API embedder can
+replace it, and tests use a deterministic hashed bag-of-words `FakeEmbedder` instead of downloading a model.
+
+**Incremental indexing.** Each chunk's id is a hash of its job and its embedded text. Every run re-chunks the
+data-ish jobs (cheap, no model) and diffs against the table: an unchanged JD writes nothing, a changed JD swaps
+only its changed chunks, and only chunks without a vector for the current model are embedded. Closed jobs keep
+their chunks, because the history is what makes the index searchable. The CV is chunked in memory at run time
+and never stored.
+
+**Hybrid search, planned.** Skill names (dbt, ClickHouse, Airflow) are exact tokens that embeddings handle
+poorly, so retrieval will combine vector search with BM25 from DuckDB's `fts` extension through reciprocal rank
+fusion (k=60).
+
 **Personal data never enters git.** The CV and search preferences come from GitHub secrets at runtime. The image
 holds no personal data, the database is encrypted with a passphrase secret before it touches the Actions cache
 or a downloadable artifact (artifacts of a public repo can be downloaded by anyone signed in to GitHub), and the
@@ -175,6 +198,7 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 | Digest (Telegram / email) | `jobagent/notify.py` |
 | dbt project | `analytics/` |
 | Relevance model (features, training, validation) | `jobagent/ml/` |
+| Retrieval: chunking, embeddings, incremental index | `jobagent/rag/` |
 | Synthetic demo data | `jobagent/demo.py` |
 | Pipeline (CI + schedule) | `.github/workflows/daily.yml` |
 

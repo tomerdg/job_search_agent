@@ -20,3 +20,15 @@ def test_demo_db_has_feedback(tmp_path):
     decisions = {r["decision"] for r in s.feedback()}
     s.close()
     assert decisions == {"applied", "skipped", "irrelevant"}
+
+
+def test_demo_db_has_rag_index(tmp_path):
+    db = tmp_path / "demo.duckdb"
+    build(db, days=30)
+    s = Store(db)
+    one = lambda q: s.conn.execute(q).fetchone()[0]
+    assert one("SELECT count(*) FROM job_chunks") > 0
+    assert one("SELECT count(*) FROM job_chunks c ANTI JOIN chunk_embeddings e USING (chunk_id)") == 0
+    assert one("SELECT count(*) FROM rag_index_runs") == one("SELECT count(*) FROM runs")
+    assert one("SELECT max(indexed_at) FROM rag_index_runs") == one("SELECT max(started_at) FROM runs")
+    s.close()

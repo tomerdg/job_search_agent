@@ -1,0 +1,12 @@
+Jane Example
+SUMMARY
+Data engineer with six years of experience building pipelines and warehouses in Python and SQL.
+EXPERIENCE
+Example Corp | Senior Data Engineer 2021–Present
+Built a dbt warehouse on Snowflake and streaming ingestion with Kafka. Cut pipeline costs by a third.
+Sample Ltd | BI Developer 2018–2021
+Developed SSIS packages and Power BI reports for finance and operations teams across the company.
+SKILLS
+Python, SQL, dbt, Airflow, Kafka, Snowflake, Docker, GitHub Actions.
+EDUCATION
+B.Sc. in Industrial Engineering, Example University.

@@ -7,6 +7,9 @@ Tables (the raw layer that the dbt project in analytics/ builds on):
   source_runs       append-only: per run and source, did the fetch work and how many jobs came back
   job_feedback      one row per job: the owner's latest decision (applied / skipped / irrelevant),
                     the labels for the relevance model
+  job_chunks        JD sections for retrieval (jobagent/rag): one row per chunk, kept after a job closes
+  chunk_embeddings  one vector per chunk and embedding model, FLOAT[384] for array_cosine_distance
+  rag_index_runs    append-only: per index run, counts only (jobs, chunks added/removed/dropped, seconds)
 """
 from __future__ import annotations
 
@@ -93,6 +96,38 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model VARCHAR;           -- model that
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ml_score DOUBLE;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ml_model_version VARCHAR;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ml_scored_at TIMESTAMP;
+-- Retrieval (jobagent/rag). chunk_id = hash(job_id, content_hash): an unchanged chunk keeps its id and
+-- its embedding when the rest of its JD changes. FLOAT[384] must match jobagent.rag.embed.DIM.
+CREATE TABLE IF NOT EXISTS job_chunks (
+    chunk_id     VARCHAR PRIMARY KEY,
+    job_id       VARCHAR NOT NULL,
+    section      VARCHAR NOT NULL,   -- about | responsibilities | requirements | advantage | other
+    seq          INTEGER NOT NULL,   -- order within the JD
+    text         VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,   -- hash of the embedded text (company | title | section + text)
+    created_at   TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+    chunk_id     VARCHAR NOT NULL,
+    model_id     VARCHAR NOT NULL,
+    embedding    FLOAT[384] NOT NULL,
+    embedded_at  TIMESTAMP NOT NULL,
+    PRIMARY KEY (chunk_id, model_id)
+);
+CREATE TABLE IF NOT EXISTS rag_index_runs (
+    indexed_at       TIMESTAMP NOT NULL,
+    run_id           VARCHAR,
+    model_id         VARCHAR NOT NULL,
+    chunking_version VARCHAR NOT NULL,
+    jobs_indexed     INTEGER NOT NULL,  -- eligible jobs chunked in this run
+    jobs_changed     INTEGER NOT NULL,  -- jobs that had chunks and whose chunks changed
+    chunks_total     INTEGER NOT NULL,  -- chunks of the eligible jobs after this run
+    chunks_added     INTEGER NOT NULL,
+    chunks_removed   INTEGER NOT NULL,
+    chunks_dropped   INTEGER NOT NULL,  -- boilerplate or too short, never stored
+    chunks_embedded  INTEGER NOT NULL,
+    seconds          DOUBLE
+);
 """
 
 DECISIONS = ("applied", "skipped", "irrelevant")
