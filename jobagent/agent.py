@@ -57,28 +57,90 @@ TOOLS = [
     },
 ]
 
+# Retrieval tools (jobagent/rag). Exposed only when the prompt file asks for them on its first line,
+# e.g. "#tools: search_cv, find_similar_jobs", so prompts without that line behave exactly as before.
+RAG_TOOLS = [
+    {
+        "name": "search_cv",
+        "description": "Search the candidate's CV for evidence about one requirement (a skill, a kind of "
+                       "experience). Returns the 3 most relevant CV passages with their section.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "One requirement, e.g. 'Spark streaming'"}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "find_similar_jobs",
+        "description": "Find up to 5 past jobs most similar to this one that the candidate already decided on. "
+                       "Returns title, company, the earlier match score and the candidate's decision "
+                       "(applied / skipped / irrelevant).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"job_id": {"type": "string"}},
+            "required": ["job_id"],
+        },
+    },
+]
+RAG_TOOL_NAMES = {t["name"] for t in RAG_TOOLS}
+
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+_TOOLS_LINE = re.compile(r"#tools:\s*(.*)")
 
 
 def load_prompt(version: str) -> str:
-    """System prompt template jobagent/prompts/{version}.txt (placeholders: roles, allowed, blocked)."""
+    """System prompt template jobagent/prompts/{version}.txt (placeholders: roles, allowed, blocked),
+    without its optional '#tools:' line (see prompt_tools)."""
+    return _prompt_file(version)[1]
+
+
+def prompt_tools(version: str) -> set[str]:
+    """Extra tools a prompt asks for on its first line: '#tools: search_cv, find_similar_jobs'."""
+    return _prompt_file(version)[0]
+
+
+def _prompt_file(version: str) -> tuple[set[str], str]:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", version) or version.startswith("."):
         raise ValueError(f"bad prompt version: {version!r}")
     path = PROMPTS_DIR / f"{version}.txt"
     if not path.is_file():
         raise FileNotFoundError(f"no prompt file for version {version!r}: {path}")
-    return path.read_text(encoding="utf-8").rstrip("\n")
+    text = path.read_text(encoding="utf-8").rstrip("\n")
+    first, _, rest = text.partition("\n")
+    if m := _TOOLS_LINE.fullmatch(first.strip()):
+        tools = {t.strip() for t in m.group(1).split(",") if t.strip()}
+        unknown = tools - RAG_TOOL_NAMES
+        if unknown:
+            raise ValueError(f"prompt {version!r} asks for unknown tools: {sorted(unknown)}")
+        return tools, rest
+    return set(), text
 
 
 class Agent:
     def __init__(self, store: Store, cv_text: str, profile: dict, client=None,
-                 model: str | None = None, prompt_version: str | None = None):
+                 model: str | None = None, prompt_version: str | None = None, embedder=None,
+                 exclude_feedback_sources: tuple[str, ...] = ()):
+        """embedder: for the retrieval tools (default: jobagent.rag.embed.get_embedder()), only used when
+        the prompt asks for them. exclude_feedback_sources: find_similar_jobs never returns a job whose
+        feedback came from one of these sources (the eval passes ('eval',), so no label leaks)."""
         self.store = store
         self.cv_text = cv_text
         self.profile = profile
         self.model = model or MODEL
         self.prompt_version = prompt_version or PROMPT_VERSION
         self.prompt = load_prompt(self.prompt_version)  # fail early on a bad version
+        self.rag_tools = prompt_tools(self.prompt_version)
+        self.tools = TOOLS + [t for t in RAG_TOOLS if t["name"] in self.rag_tools]
+        self.exclude_feedback_sources = tuple(exclude_feedback_sources)
+        self.embedder = self.cv_index = None
+        if self.rag_tools:
+            from jobagent.rag.embed import get_embedder
+            from jobagent.rag.retrieve import CvIndex
+            self.embedder = embedder or get_embedder()
+            if self.embedder is None:
+                raise RuntimeError(f"prompt {self.prompt_version} needs an embedder: install requirements-rag.txt")
+            if "search_cv" in self.rag_tools:
+                self.cv_index = CvIndex(cv_text, self.embedder)  # in memory only
         if client is None:
             import anthropic
             client = anthropic.Anthropic()
@@ -110,6 +172,19 @@ class Agent:
     def _read_cv(self, _: dict) -> str:
         return self.cv_text
 
+    def _search_cv(self, args: dict) -> str:
+        return json.dumps(self.cv_index.search(str(args["query"]), k=3), ensure_ascii=False)
+
+    def _find_similar_jobs(self, args: dict) -> str:
+        from jobagent.rag.retrieve import similar_jobs
+        if self.store.get(args["job_id"]) is None:
+            return "error: unknown job_id"
+        rows = similar_jobs(self.store, self.embedder, args["job_id"], k=5, labeled_only=True,
+                            exclude_feedback_sources=self.exclude_feedback_sources)
+        return json.dumps([{"title": r["title"], "company": r["company"], "score": r["score"],
+                            "decision": r["decision"], "similarity": round(r["similarity"], 2)} for r in rows],
+                          ensure_ascii=False)
+
     def _save_match(self, args: dict) -> str:
         if self.store.get(args["job_id"]) is None:
             return "error: unknown job_id"
@@ -128,6 +203,8 @@ class Agent:
             "read_job_description": self._read_job_description,
             "read_cv": self._read_cv,
             "save_match": self._save_match,
+            **({"search_cv": self._search_cv} if "search_cv" in self.rag_tools else {}),
+            **({"find_similar_jobs": self._find_similar_jobs} if "find_similar_jobs" in self.rag_tools else {}),
         }.get(name)
         if fn is None:
             return f"error: unknown tool {name}"
@@ -148,7 +225,7 @@ class Agent:
                                blocked=", ".join(p.get("locations_blocked", [])) or "none")
         for _ in range(MAX_TURNS):
             resp = self.client.messages.create(
-                model=self.model, max_tokens=4096, system=system, tools=TOOLS, messages=messages,
+                model=self.model, max_tokens=4096, system=system, tools=self.tools, messages=messages,
             )
             self.turns += 1
             add_usage(self.usage, getattr(resp, "usage", None))

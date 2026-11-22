@@ -222,3 +222,26 @@ def similar_jobs(store: Store, embedder: Embedder, job_id: str, k: int = 5, labe
     for r in rows:
         r["score"] = None if r["score"] is None else int(r["score"])
     return rows
+
+
+class CvIndex:
+    """The CV's chunks with their vectors and a BM25 index, in memory only (never stored or logged).
+    search() fuses vector and BM25 rankings with RRF, like search() over JDs."""
+
+    def __init__(self, cv_text: str, embedder: Embedder):
+        from jobagent.rag.chunking import chunk_cv, cv_embed_text
+        self.embedder = embedder
+        self.chunks = chunk_cv(cv_text)
+        texts = [cv_embed_text(c.section, c.text) for c in self.chunks]
+        self.vectors = embedder.embed(texts) if texts else np.zeros((0, embedder.dim), dtype=np.float32)
+        self.bm25 = BM25(texts) if texts else None
+
+    def search(self, query: str, k: int = 3) -> list[dict]:
+        if not self.chunks:
+            return []
+        sims = self.vectors @ self.embedder.embed([query])[0]
+        fused = pd.Series(0.0, index=range(len(self.chunks)))
+        fused += (1 / (RRF_K + _ranks(pd.Series(sims + 1)))).fillna(0)
+        fused += (1 / (RRF_K + _ranks(pd.Series(self.bm25.scores(query))))).fillna(0)
+        best = fused[fused > 0].sort_values(ascending=False, kind="stable").head(k)
+        return [{"section": self.chunks[i].section, "text": self.chunks[i].text} for i in best.index]

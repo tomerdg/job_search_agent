@@ -196,3 +196,37 @@ and fails when hybrid recall@10 drops below 0.7. `--db data/jobs.duckdb` runs it
   ~800-character chunk is never seen (Hebrew uses more tokens per character). Next things to try, measured
   with this same eval: smaller chunks, or a model with a longer input (`paraphrase-multilingual-mpnet-base-v2`,
   512 tokens, 768 dims, ~1 GB).
+
+## Experiment: prompt v3 (retrieval tools) vs v1 (2026-11-22)
+
+v3 adds two tools (only for prompts whose first line asks for them): `search_cv` (top 3 CV passages for a
+requirement, from an in-memory index of the CV) and `find_similar_jobs` (similar past jobs the owner decided
+on, with score and decision, never the note). Leakage rule: a case never sees itself, a copy of itself, or
+any label from the eval bootstrap (`job_feedback.source = 'eval'`), tested in `tests/test_agent_rag.py`.
+
+`python -m eval.evaluate --prompt-version v3 --repeats 3 --baseline eval/dataset/baseline.json`, Sonnet 5.5,
+82 cases, batch-paired with the v1 baseline:
+
+| metric | v1 (baseline) | v3 |
+|---|---|---|
+| ROC AUC (fit) | 0.948 | 0.937 |
+| F1 fit-or-maybe @59 | 0.939 | 0.826 |
+| precision fit-or-maybe @59 | 0.885 | 0.826 |
+| recall fit-or-maybe @59 | 1.000 | 0.826 |
+| recall fit @59 | 1.000 | 0.867 |
+| precision@3 | 0.500 | 0.500 |
+| Spearman | 0.754 | 0.742 |
+| decision flip rate (repeats) | 0.024 | 0.085 |
+| cost per job | $0.0085 | $0.0139 (+64%) |
+
+Paired test: no significant difference (Wilcoxon p=0.20; F1 delta -0.047, 95% CI [-0.178, +0.076]).
+
+**Decision: keep v1 in production.** v3 fails both conditions: it is not better on any metric and is worse on
+recall (3 of 15 fit jobs fell below the threshold, against 0 for v1), and cost per job rose 64%, above the
+50% limit. It is also less stable between repeats. A likely reason: v3 tells the model to count a requirement
+as met only when `search_cv` returns a passage that shows it, and the CV index has the same 128-token
+truncation as the JD index, so some evidence is never found and good fits get marked down.
+
+What this run could not test: `find_similar_jobs` returned nothing, because every decision recorded so far
+comes from the eval bootstrap and is excluded by the leakage rule. Re-run with `--history-db` once there
+are 20-30 real applied/skipped decisions on jobs outside the eval set.

@@ -77,14 +77,55 @@ def fill_store(store: Store, jobs: list[dict], batch_seed: int) -> dict[str, str
     return mapping
 
 
+# Leakage rule for prompts with find_similar_jobs: a case never sees itself, a copy of itself, or any label
+# from the eval bootstrap (job_feedback.source = 'eval'), only the owner's other decisions.
+EXCLUDED_FEEDBACK_SOURCES = ("eval",)
+
+
+def load_history(store: Store, history_db: Path, cases: list[dict]) -> int:
+    """Copy the labeled jobs of a jobs DB (decisions not from the eval bootstrap) into the eval store, as
+    evidence for find_similar_jobs. Skips every eval case and any job with an eval case's company + title.
+    They get prefilter FALSE, so they are never scored. The note column is not copied. Returns the count."""
+    con = store.conn
+    path = str(history_db).replace("'", "''")
+    con.execute(f"ATTACH '{path}' AS hist (READ_ONLY)")
+    try:
+        case_ids = [c["case_id"] for c in cases]
+        case_keys = [f"{(c['company'] or '').lower().strip()}\x1f{c['title'].lower().strip()}" for c in cases]
+        keep = ("f.source NOT IN (SELECT unnest(?)) AND NOT list_contains(?, j.job_id) "
+                "AND NOT list_contains(?, lower(trim(j.company)) || chr(31) || lower(trim(j.title)))")
+        params = [list(EXCLUDED_FEEDBACK_SOURCES), case_ids, case_keys]
+        n = con.execute(
+            "INSERT INTO jobs (job_id, source, company, title, location, department, url, description, first_seen,"
+            " last_seen, is_active, prefilter, score) SELECT j.job_id, j.source, j.company, j.title, j.location,"
+            " j.department, j.url, j.description, j.first_seen, j.last_seen, TRUE, FALSE, j.score"
+            f" FROM hist.jobs j JOIN hist.job_feedback f USING (job_id) WHERE {keep}"
+            " AND j.job_id NOT IN (SELECT job_id FROM jobs)", params).fetchone()[0]
+        con.execute("INSERT INTO job_feedback (job_id, decision, decided_at, source) SELECT f.job_id, f.decision,"
+                    " f.decided_at, f.source FROM hist.job_feedback f JOIN hist.jobs j USING (job_id) WHERE "
+                    + keep + " AND f.job_id IN (SELECT job_id FROM jobs)", params)
+        return n
+    finally:
+        con.execute("DETACH hist")
+
+
 def score_once(jobs: list[dict], cv: str, profile: dict, model: str, prompt_version: str,
-               batch_seed: int, client=None) -> tuple[dict[str, int], dict, int]:
-    """One full pass over the cases. Returns (case_id -> score, token usage, API calls)."""
+               batch_seed: int, client=None, embedder=None, history_db: Path | None = None
+               ) -> tuple[dict[str, int], dict, int]:
+    """One full pass over the cases. Returns (case_id -> score, token usage, API calls).
+    A prompt with retrieval tools also gets the cases indexed (and the history DB's labeled jobs, if given)."""
     with tempfile.TemporaryDirectory() as tmp:
         store = Store(Path(tmp) / "eval.duckdb")
         try:
             mapping = fill_store(store, jobs, batch_seed)
-            agent = Agent(store, cv, profile, client=client, model=model, prompt_version=prompt_version)
+            extra = {}
+            if agent_mod.prompt_tools(prompt_version):
+                from jobagent.rag.index import index_jobs
+                if history_db:
+                    load_history(store, history_db, jobs)
+                index_jobs(store, embedder, run_id="eval", scope="all")
+                extra = {"embedder": embedder, "exclude_feedback_sources": EXCLUDED_FEEDBACK_SOURCES}
+            agent = Agent(store, cv, profile, client=client, model=model, prompt_version=prompt_version, **extra)
             idle = 0
             while store.pending_scoring(limit=1) and idle < MAX_IDLE_RUNS:
                 before = len(agent.saved)
@@ -97,16 +138,22 @@ def score_once(jobs: list[dict], cv: str, profile: dict, model: str, prompt_vers
 
 
 def run(jobs: list[dict], labels: dict[str, dict], cv: str, profile: dict, model: str, prompt_version: str,
-        repeats: int = 1, batch_seed: int = 0, client=None, vary_batches: bool = False) -> tuple[pd.DataFrame, dict]:
+        repeats: int = 1, batch_seed: int = 0, client=None, vary_batches: bool = False, embedder=None,
+        history_db: Path | None = None) -> tuple[pd.DataFrame, dict]:
     """Score every case `repeats` times. Returns (predictions, run info: usage, cost, timing, coverage).
 
     vary_batches: repeat r uses seed batch_seed + r (different batches per repeat) instead of batch_seed."""
     jobs = [j for j in jobs if j["case_id"] in labels and labels[j["case_id"]]["label"] in M.ORDINAL]
     usage, turns, rows = empty_usage(), 0, []
+    if agent_mod.prompt_tools(prompt_version) and embedder is None:  # load the model once for all repeats
+        from jobagent.rag.embed import get_embedder
+        embedder = get_embedder()
+        if embedder is None:
+            raise RuntimeError(f"prompt {prompt_version} needs an embedder: install requirements-rag.txt")
     t0 = time.time()
     for r in range(repeats):
         seed = batch_seed + r if vary_batches else batch_seed
-        scores, u, t = score_once(jobs, cv, profile, model, prompt_version, seed, client)
+        scores, u, t = score_once(jobs, cv, profile, model, prompt_version, seed, client, embedder, history_db)
         add_usage(usage, u)
         turns += t
         rows += [{"case_id": cid, "repeat": r, "score": s} for cid, s in scores.items()]
@@ -195,6 +242,9 @@ def main(argv=None) -> int:
                     help=f"save this run as the baseline (default {BASELINE_PATH.relative_to(ROOT)}, git-ignored;"
                          " then run `python -m eval.dataset encrypt`)")
     ap.add_argument("--limit", type=int, help="only the first N cases (quick smoke test)")
+    ap.add_argument("--history-db", type=Path,
+                    help="for prompts with find_similar_jobs: a jobs DB whose labeled jobs (not from the eval"
+                         " bootstrap, not eval cases) are the evidence")
     ap.add_argument("--no-mlflow", action="store_true", help="do not log the run to MLflow")
     ap.add_argument("--gate", action="store_true",
                     help="apply the quality gate (eval/gate.py) and exit 1 when it fails; use with --baseline")
@@ -214,7 +264,7 @@ def main(argv=None) -> int:
             print(f"warning: comparison will not be batch-paired: {w}", file=sys.stderr)
 
     preds, info = run(jobs, labels, cv, profile, args.model, args.prompt_version, args.repeats, args.batch_seed,
-                      vary_batches=args.vary_batches)
+                      vary_batches=args.vary_batches, history_db=args.history_db)
     if preds.empty:
         print("No case was scored; check the API key and the log above.")
         return 1
