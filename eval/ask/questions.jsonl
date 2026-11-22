@@ -1,0 +1,10 @@
+{"qid": "kafka-companies", "question": "Which companies asked for Kafka?", "expect": {"skills": ["kafka"]}}
+{"qid": "tableau-count", "question": "How many jobs mention Tableau, and at which companies?", "expect": {"skills": ["tableau"]}}
+{"qid": "kubernetes", "question": "Which roles require Kubernetes experience?", "expect": {"skills": ["kubernetes"]}}
+{"qid": "snowflake", "question": "Who is hiring people who know Snowflake?", "expect": {"skills": ["snowflake"]}}
+{"qid": "power-bi-he", "question": "אילו חברות מחפשות ניסיון ב-Power BI?", "expect": {"skills": ["power_bi"]}}
+{"qid": "analyst-reqs", "question": "What do data analyst roles require most often?", "expect": {"role": "analytics"}}
+{"qid": "terraform", "question": "Which jobs mention Terraform?", "expect": {"skills": ["terraform"]}}
+{"qid": "databricks", "question": "Which companies use Databricks according to their job posts?", "expect": {"skills": ["databricks"]}}
+{"qid": "docker", "question": "Which job descriptions ask for Docker?", "expect": {"skills": ["docker"]}}
+{"qid": "cobol-none", "question": "Which companies are hiring COBOL mainframe developers?", "expect": {"jd": "\\bcobol\\b"}}
