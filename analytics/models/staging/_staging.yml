@@ -12,7 +12,7 @@ models:
         data_tests:
           - accepted_values:
               arguments:
-                values: [adam, topmatch, comeet, greenhouse, lever, oracle, hunter, custom]
+                values: [adam, topmatch, comeet, greenhouse, workday, lever, oracle, hunter, custom]
       - name: first_seen_at
         data_tests: [not_null]
       - name: match_score
