@@ -139,7 +139,11 @@ def check_no_leakage(train: pd.DataFrame, gold: pd.DataFrame, v: Validation | No
 def check_unique_rows(rows: pd.DataFrame, v: Validation | None = None) -> Validation:
     v = v or Validation()
     dupes = int(rows["gid"].duplicated().sum())
-    v.require("labels.unique_rows", dupes == 0, f"{dupes} jobs appear more than once in the labels")
+    detail = ""
+    if dupes and "tier" in rows:  # counts only (no ids or text), so the daily log says which tiers collide
+        tiers = rows.loc[rows["gid"].duplicated(keep=False), "tier"].value_counts().sort_index()
+        detail = " (" + ", ".join(f"{t}={n}" for t, n in tiers.items()) + ")"
+    v.require("labels.unique_rows", dupes == 0, f"{dupes} jobs appear more than once in the labels{detail}")
     return v
 
 

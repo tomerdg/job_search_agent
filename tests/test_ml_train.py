@@ -54,6 +54,19 @@ def test_eval_gold_maps_by_url_and_replaces_silver(demo_frames):
     assert mine.iloc[0]["is_fit"] == 0 and mine.iloc[0]["case_id"] == "c1"
 
 
+def test_eval_case_whose_id_is_a_db_job_is_one_row(demo_frames):
+    """case_id is the job_id the case was built from. When the job is fetched again with a different url
+    (and a reworded title), the url match fails; the case must still map to that job, not add a second row."""
+    jobs, fb = demo_frames
+    j = jobs.dropna(subset=["score"]).iloc[0]
+    case = {"case_id": j.job_id, "company": j.company, "title": j.title + " (reposted)", "location": j.location,
+            "department": "", "url": "https://example.com/other-url", "description": j.description}
+    rows = T.labeled_rows(jobs, fb.iloc[:0], DEMO_PROFILE, [case], {j.job_id: {"label": "fit"}})
+    assert not rows["gid"].duplicated().any()
+    mine = rows[rows["gid"] == j.job_id]
+    assert len(mine) == 1 and mine.iloc[0]["tier"] == "gold" and mine.iloc[0]["job_id"] == j.job_id
+
+
 def test_cv_never_splits_a_company(demo_frames):
     jobs, fb = demo_frames
     rows = T.labeled_rows(jobs, fb, DEMO_PROFILE)
