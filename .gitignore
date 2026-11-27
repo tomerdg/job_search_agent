@@ -33,3 +33,6 @@ mlflow.db
 *.joblib
 *.pkl
 /models/
+
+# macOS Finder metadata
+.DS_Store
